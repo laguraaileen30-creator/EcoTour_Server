@@ -3,13 +3,15 @@ const {
   createReservation,
   getReservations,
   getReservationById,
+  updateReservationStatus,
 } = require('../controllers/reservationController');
-const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.post('/', authMiddleware, createReservation);
-router.get('/', authMiddleware, getReservations);
-router.get('/:id', authMiddleware, getReservationById);
+router.post('/', createReservation);
+router.get('/', getReservations);
+router.get('/:id', getReservationById);
+router.patch('/:id/status', updateReservationStatus);
 
 module.exports = router;
+

@@ -11,6 +11,7 @@ require('dotenv').config();
 
 const authRoutes = require('./src/routes/authRoutes');
 const userRoutes = require('./src/routes/userRoutes');
+const serviceRoutes = require('./src/routes/serviceRoutes');
 const reservationRoutes = require('./src/routes/reservationRoutes');
 const paymentRoutes = require('./src/routes/paymentRoutes');
 const galleryRoutes = require('./src/routes/galleryRoutes');
@@ -46,6 +47,7 @@ const createApp = () => {
 
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/users', userRoutes);
+  app.use('/api/v1/services', serviceRoutes);
   app.use('/api/v1/reservations', reservationRoutes);
   app.use('/api/v1/payments', paymentRoutes);
   app.use('/api/v1/gallery', galleryRoutes);
