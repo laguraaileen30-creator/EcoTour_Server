@@ -15,20 +15,19 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Find user by email
-    const [rows] = await db.query(
-      "SELECT * FROM users WHERE email = ?",
-      [email]
-    );
+    // Find user by email via stored procedure
+    const [rows] = await db.query("CALL sp_get_user_by_email(?)", [email]);
+    // mysql2 returns [[resultRows], fields] for CALL
+    const resultRows = rows[0];
 
-    if (rows.length === 0) {
+    if (!resultRows || resultRows.length === 0) {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
       });
     }
 
-    const user = rows[0];
+    const user = resultRows[0];
 
     // Secure password verification
     let isMatch = false;
@@ -52,50 +51,45 @@ exports.login = async (req, res, next) => {
     if (needsHashUpgrade) {
       try {
         const newHashed = await bcrypt.hash(password, 10);
-        await db.query("UPDATE users SET password = ? WHERE user_id = ?", [newHashed, user.user_id]);
+        await db.query("CALL sp_update_user_password(?, ?)", [user.user_id, newHashed]);
       } catch (upgErr) {
         console.warn("Failed to auto-upgrade legacy password hash:", upgErr.message);
       }
     }
 
     // Validate account approval and active status
+    const roleLower = (user.role || "").toLowerCase();
     const normalizedStatus = (user.status || "").toLowerCase();
-    const normalizedAccStatus = (user.account_status || "").toLowerCase();
 
-    if (normalizedStatus === "pending") {
-      return res.status(403).json({
-        success: false,
-        message: "Your account is waiting for administrator approval. Please check your email for updates.",
-      });
-    }
+    // Admin is superuser and always permitted to log in
+    if (roleLower !== "admin") {
+      if (normalizedStatus === "pending") {
+        return res.status(403).json({
+          success: false,
+          message: "Your account is waiting for administrator approval. Please check your email for updates.",
+        });
+      }
 
-    if (normalizedStatus === "rejected") {
-      const reasonMsg = user.rejection_reason ? ` Reason: "${user.rejection_reason}"` : "";
-      return res.status(403).json({
-        success: false,
-        message: `Your account registration was denied by the administrator.${reasonMsg}`,
-      });
-    }
+      if (normalizedStatus === "rejected") {
+        return res.status(403).json({
+          success: false,
+          message: "Your account registration was denied by the administrator.",
+        });
+      }
 
-    if (normalizedStatus === "suspended") {
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been suspended. Please contact management.",
-      });
-    }
-
-    if (normalizedStatus !== "approved" || (normalizedAccStatus && normalizedAccStatus !== "active")) {
-      return res.status(403).json({
-        success: false,
-        message: "Account status is inactive or not approved for login.",
-      });
+      if (normalizedStatus === "suspended") {
+        return res.status(403).json({
+          success: false,
+          message: "Your account has been suspended. Please contact management.",
+        });
+      }
     }
 
     const token = jwt.sign(
       {
         id: user.user_id,
         role: user.role,
-        user_number: user.user_number || user.client_no,
+        user_number: user.user_number,
       },
       process.env.JWT_SECRET || "secret",
       {
@@ -108,7 +102,7 @@ exports.login = async (req, res, next) => {
       token,
       user: {
         user_id: user.user_id,
-        user_number: user.user_number || user.client_no,
+        user_number: user.user_number,
         fname: user.fname,
         mname: user.mname,
         lname: user.lname,
@@ -118,8 +112,8 @@ exports.login = async (req, res, next) => {
         gender: user.gender,
         role: user.role,
         status: user.status,
-        account_status: user.account_status || "Active",
-        created_by: user.created_by || "Self-Registered",
+        account_status: "Active",
+        created_by: "Self-Registered",
       },
     });
   } catch (err) {
@@ -154,12 +148,11 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const [exist] = await db.query(
-      "SELECT * FROM users WHERE email=?",
-      [email]
-    );
+    // Check duplicate email via SP
+    const [existRows] = await db.query("CALL sp_get_user_by_email(?)", [email]);
+    const existResult = existRows[0];
 
-    if (exist.length > 0) {
+    if (existResult && existResult.length > 0) {
       return res.status(400).json({
         success: false,
         message: "Email address is already registered in the system.",
@@ -169,7 +162,7 @@ exports.register = async (req, res, next) => {
     // Auto-generate User Number if not provided
     const currentYear = new Date().getFullYear();
     const prefix = role.toLowerCase() === "staff" ? "STF" : role.toLowerCase() === "admin" ? "ADM" : "CLT";
-    
+
     let finalUserNumber = user_number || client_no;
     if (!finalUserNumber) {
       const [countRow] = await db.query("SELECT COUNT(*) AS total FROM users WHERE role = ?", [role]);
@@ -179,62 +172,32 @@ exports.register = async (req, res, next) => {
 
     // Auto-generate default password: lastname + firstname + 123 in lowercase
     const rawPassword = password || `${(lname || "").trim()}${(fname || "").trim()}123`.toLowerCase().replace(/\s+/g, "");
-    
+
     // Hash password securely with bcrypt
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
-    // Initial status: Client self-register defaults to 'Pending' & 'Inactive'. Admin creation defaults to 'Approved' & 'Active'.
+    // Status defaults
     const finalStatus = status ? status : (role.toLowerCase() === "client" ? "Pending" : "Approved");
     const finalAccountStatus = finalStatus === "Approved" ? "Active" : "Inactive";
     const finalCreatedBy = created_by || "Self-Registered";
 
-    // Insert user into database
-    const [cols] = await db.query("SHOW COLUMNS FROM users LIKE 'created_by'");
-    const hasCreatedBy = cols.length > 0;
-
-    if (hasCreatedBy) {
-      await db.query(
-        `INSERT INTO users
-        (user_number, client_no, fname, mname, lname, contact_no, address, gender, role, email, password, status, account_status, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          finalUserNumber,
-          finalUserNumber,
-          fname,
-          mname || "",
-          lname,
-          contact_no,
-          address,
-          gender,
-          role,
-          email,
-          hashedPassword,
-          finalStatus,
-          finalAccountStatus,
-          finalCreatedBy,
-        ]
-      );
-    } else {
-      await db.query(
-        `INSERT INTO users
-        (user_number, client_no, fname, mname, lname, contact_no, address, gender, role, email, password, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          finalUserNumber,
-          finalUserNumber,
-          fname,
-          mname || "",
-          lname,
-          contact_no,
-          address,
-          gender,
-          role,
-          email,
-          hashedPassword,
-          finalStatus,
-        ]
-      );
-    }
+    // Insert user via stored procedure
+    await db.query(
+      "CALL sp_register_user(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        finalUserNumber,
+        fname,
+        mname || "",
+        lname,
+        contact_no,
+        address,
+        gender,
+        role,
+        email,
+        hashedPassword,
+        finalStatus,
+      ]
+    );
 
     res.status(201).json({
       success: true,

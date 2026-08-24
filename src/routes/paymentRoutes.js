@@ -1,10 +1,10 @@
 const express = require('express');
-const { createPayment, getPayments } = require('../controllers/paymentController');
-const authMiddleware = require('../middleware/authMiddleware');
+const { createPayment, getPayments, getPaymentById } = require('../controllers/paymentController');
 
 const router = express.Router();
 
-router.post('/', authMiddleware, createPayment);
-router.get('/', authMiddleware, getPayments);
+router.post('/', createPayment);
+router.get('/', getPayments);
+router.get('/:id', getPaymentById);
 
 module.exports = router;

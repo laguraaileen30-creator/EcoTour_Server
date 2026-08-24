@@ -1,24 +1,21 @@
 const db = require('../config/database');
+const { createSystemNotification } = require('./notificationController');
 
 // GET all reservations with booking items
 exports.getReservations = async (req, res) => {
   try {
-    const [bookings] = await db.query(
-      `SELECT b.*, u.user_number 
-       FROM bookings b 
-       LEFT JOIN users u ON b.user_id = u.user_id 
-       ORDER BY b.created_at DESC`
-    );
+    // Fetch all bookings via SP
+    const [bookingRows] = await db.query('CALL sp_get_all_bookings()');
+    const bookings = bookingRows[0] || [];
 
     if (bookings.length === 0) {
       return res.status(200).json({ success: true, count: 0, data: [] });
     }
 
-    const bookingIds = bookings.map(b => b.id);
-    const [items] = await db.query(
-      `SELECT * FROM booking_items WHERE booking_id IN (?)`,
-      [bookingIds]
-    );
+    // Fetch all booking items for these bookings in one SP call
+    const bookingIds = bookings.map(b => b.id).join(',');
+    const [itemRows] = await db.query('CALL sp_get_booking_items_bulk(?)', [bookingIds]);
+    const items = itemRows[0] || [];
 
     // Group items by booking_id
     const itemsMap = {};
@@ -33,6 +30,13 @@ exports.getReservations = async (req, res) => {
         subtotal: parseFloat(item.subtotal),
       });
     });
+
+    const formatDateStr = (d) => {
+      if (!d) return '';
+      if (typeof d === 'string') return d.split('T')[0];
+      const dt = new Date(d);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    };
 
     const formatted = bookings.map(b => {
       const bItems = itemsMap[b.id] || [];
@@ -51,8 +55,8 @@ exports.getReservations = async (req, res) => {
         email: b.client_email || 'guest@ecotour.com',
         touristEmail: b.client_email || 'guest@ecotour.com',
         contactNumber: b.client_phone || '',
-        bookingDate: b.booking_date ? new Date(b.booking_date).toISOString().split('T')[0] : '',
-        reservationDate: b.booking_date ? new Date(b.booking_date).toISOString().split('T')[0] : '',
+        bookingDate: formatDateStr(b.booking_date),
+        reservationDate: formatDateStr(b.booking_date),
         arrivalTime: b.arrival_time || '09:00 AM',
         timeSlot: b.arrival_time || '09:00 AM',
         totalVisitors: b.pax || 1,
@@ -79,17 +83,18 @@ exports.getReservations = async (req, res) => {
 exports.getReservationById = async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await db.query(
-      `SELECT * FROM bookings WHERE id = ? OR booking_number = ?`,
-      [id, id]
-    );
 
-    if (rows.length === 0) {
+    const [bookingRows] = await db.query('CALL sp_get_booking_by_id(?)', [id]);
+    const bookingResult = bookingRows[0] || [];
+
+    if (bookingResult.length === 0) {
       return res.status(404).json({ success: false, message: 'Reservation not found' });
     }
 
-    const b = rows[0];
-    const [items] = await db.query(`SELECT * FROM booking_items WHERE booking_id = ?`, [b.id]);
+    const b = bookingResult[0];
+
+    const [itemRows] = await db.query('CALL sp_get_booking_items(?)', [b.id]);
+    const items = itemRows[0] || [];
 
     const formatted = {
       id: b.id,
@@ -136,37 +141,39 @@ exports.createReservation = async (req, res) => {
     const status = body.status || 'Pending';
     const userId = body.userId || (req.user ? req.user.user_id : null);
 
-    const [result] = await db.query(
-      `INSERT INTO bookings 
-        (booking_number, user_id, client_name, client_email, client_phone, booking_date, arrival_time, pax, total_amount, payment_method, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [bookingNumber, userId, clientName, clientEmail, clientPhone, bookingDate, arrivalTime, pax, totalAmount, paymentMethod, status]
+    // Create booking header via SP
+    const [createRows] = await db.query(
+      'CALL sp_create_booking(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [bookingNumber, userId || null, clientName, clientEmail, clientPhone,
+       bookingDate, arrivalTime, pax, totalAmount, paymentMethod, status]
     );
+    const createResult = createRows[0] || [];
+    const bookingId = createResult[0] ? createResult[0].booking_id : null;
 
-    const bookingId = result.insertId;
-
-    // Insert items if provided
+    // Insert items (done in Node.js to support bulk insert with VALUES ?)
     const items = Array.isArray(body.items) ? body.items : [];
-    if (items.length > 0) {
-      const itemValues = items.map((item, idx) => [
-        bookingId,
-        item.serviceId || item.service_id || (idx + 1),
-        item.serviceName || item.name || 'Resort Service',
-        parseFloat(item.unitPrice || item.price || 0),
-        parseInt(item.quantity || 1, 10),
-        parseFloat(item.subtotal || (parseFloat(item.unitPrice || item.price || 0) * parseInt(item.quantity || 1, 10)))
-      ]);
+    if (bookingId) {
+      if (items.length > 0) {
+        const itemValues = items.map((item, idx) => [
+          bookingId,
+          item.serviceId || item.service_id || (idx + 1),
+          item.serviceName || item.name || 'Resort Service',
+          parseFloat(item.unitPrice || item.price || 0),
+          parseInt(item.quantity || 1, 10),
+          parseFloat(item.subtotal || (parseFloat(item.unitPrice || item.price || 0) * parseInt(item.quantity || 1, 10)))
+        ]);
 
-      await db.query(
-        `INSERT INTO booking_items (booking_id, service_id, service_name, unit_price, quantity, subtotal) VALUES ?`,
-        [itemValues]
-      );
-    } else {
-      // Create a default entrance item
-      await db.query(
-        `INSERT INTO booking_items (booking_id, service_id, service_name, unit_price, quantity, subtotal) VALUES (?, ?, ?, ?, ?, ?)`,
-        [bookingId, 1, body.serviceName || body.packageName || 'Resort Entrance & Reservation Pass', totalAmount, 1, totalAmount]
-      );
+        await db.query(
+          'INSERT INTO booking_items (booking_id, service_id, service_name, unit_price, quantity, subtotal) VALUES ?',
+          [itemValues]
+        );
+      } else {
+        // Create a default entrance item
+        await db.query(
+          'INSERT INTO booking_items (booking_id, service_id, service_name, unit_price, quantity, subtotal) VALUES (?, ?, ?, ?, ?, ?)',
+          [bookingId, 1, body.serviceName || body.packageName || 'Resort Entrance & Reservation Pass', totalAmount, 1, totalAmount]
+        );
+      }
     }
 
     const createdBooking = {
@@ -174,7 +181,7 @@ exports.createReservation = async (req, res) => {
       bookingRef: bookingNumber,
       bookingNumber,
       userId,
-      userNumber: body.userNumber || `CLT-${new Date().getFullYear()}-${1000 + bookingId}`,
+      userNumber: body.userNumber || `CLT-${new Date().getFullYear()}-${1000 + (bookingId || 0)}`,
       clientName,
       fullName: clientName,
       touristName: clientName,
@@ -196,6 +203,15 @@ exports.createReservation = async (req, res) => {
       items: items.length > 0 ? items : [{ name: body.serviceName || 'Resort Day Pass', quantity: 1, unitPrice: totalAmount, subtotal: totalAmount }]
     };
 
+    // Trigger notification for staff & admin
+    createSystemNotification({
+      roleTarget: 'staff',
+      title: `New Reservation (${bookingNumber})`,
+      message: `${clientName} booked ${body.serviceName || 'Resort Reservation'} for ${bookingDate} (${pax} guests). Total: ₱${totalAmount}`,
+      type: 'booking',
+      referenceId: bookingNumber
+    });
+
     res.status(201).json({
       success: true,
       message: 'Reservation created and saved to database successfully',
@@ -207,7 +223,7 @@ exports.createReservation = async (req, res) => {
   }
 };
 
-// UPDATE reservation status (Admin / Staff action)
+// UPDATE reservation status (Admin / Staff / Client action)
 exports.updateReservationStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -217,14 +233,55 @@ exports.updateReservationStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Status is required' });
     }
 
-    const [result] = await db.query(
-      `UPDATE bookings SET status = ? WHERE id = ? OR booking_number = ?`,
-      [status, id, id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Reservation not found' });
+    // Direct SQL update with flexible ID / booking_number matching
+    try {
+      await db.query(
+        `UPDATE bookings 
+         SET status = ?, updated_at = NOW() 
+         WHERE id = ? 
+            OR booking_number = ? 
+            OR booking_number = REPLACE(?, 'REF-', 'BK-')
+            OR booking_number = REPLACE(?, 'BK-', 'REF-')`,
+        [status, id, id, id, id]
+      );
+    } catch (colErr) {
+      await db.query(
+        `UPDATE bookings 
+         SET status = ? 
+         WHERE id = ? 
+            OR booking_number = ? 
+            OR booking_number = REPLACE(?, 'REF-', 'BK-')
+            OR booking_number = REPLACE(?, 'BK-', 'REF-')`,
+        [status, id, id, id, id]
+      );
     }
+
+    // Also call stored procedure
+    try {
+      await db.query('CALL sp_update_booking_status(?, ?)', [id, status]);
+    } catch (spErr) {
+      // SP fallback
+    }
+
+    // Record audit trail in database for complete history
+    try {
+      await db.query('CALL sp_create_audit_log(?, ?, ?)', [
+        req.user ? req.user.user_id : null,
+        'UPDATE_RESERVATION_STATUS',
+        `Reservation ${id} status updated to "${status}" at ${new Date().toISOString()}`
+      ]);
+    } catch (auditErr) {
+      // Non-blocking audit log
+    }
+
+    // Trigger notification for the client / staff / admin
+    createSystemNotification({
+      roleTarget: 'all',
+      title: `Reservation #${id} Status Updated`,
+      message: `Reservation ${id} has moved to "${status}".`,
+      type: 'booking',
+      referenceId: String(id)
+    });
 
     res.status(200).json({ success: true, message: `Reservation status updated to ${status}` });
   } catch (error) {
@@ -232,4 +289,3 @@ exports.updateReservationStatus = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error updating status', error: error.message });
   }
 };
-

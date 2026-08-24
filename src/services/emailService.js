@@ -2,25 +2,31 @@ const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 /**
- * Send email via FormSubmit HTTP API directly to target Gmail inbox
+ * Send email via FormSubmit HTTP API directly to target Gmail inbox (Fast Non-blocking)
  */
 const sendViaFormSubmit = async ({ to, subject, name, bodyContent }) => {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(`https://formsubmit.co/ajax/${encodeURIComponent(to)}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Referer': 'http://localhost:5000'
       },
+      signal: controller.signal,
       body: JSON.stringify({
         _subject: subject,
         name: "EcoTourVista System",
         recipient_name: name,
+        recipient_email: to,
         message: bodyContent,
-        _template: "table"
+        _template: "table",
+        _captcha: "false"
       })
     });
+    clearTimeout(timeoutId);
     const resData = await response.json();
     console.log(`[FORMSUBMIT HTTP API] Direct Form Submit result for ${to}:`, resData);
     return resData;
@@ -31,10 +37,13 @@ const sendViaFormSubmit = async ({ to, subject, name, bodyContent }) => {
 };
 
 /**
- * Get or create Nodemailer transporter.
- * Falls back to auto-generated Ethereal test account if SMTP credentials are missing/placeholder.
+ * Cached Nodemailer transporter
  */
+let cachedTransporter = null;
+
 const getTransporter = async () => {
+  if (cachedTransporter) return cachedTransporter;
+
   const user = process.env.SMTP_USER || process.env.GMAIL_USER;
   const pass = process.env.SMTP_PASS || process.env.GMAIL_APP_PASS;
 
@@ -43,22 +52,24 @@ const getTransporter = async () => {
     const port = parseInt(process.env.SMTP_PORT || '465', 10);
 
     if (host.includes('gmail') || user.includes('@gmail.com')) {
-      return nodemailer.createTransport({
+      cachedTransporter = nodemailer.createTransport({
         service: 'gmail',
         auth: { user, pass },
       });
+      return cachedTransporter;
     }
-    return nodemailer.createTransport({
+    cachedTransporter = nodemailer.createTransport({
       host,
       port,
       secure: port === 465 || process.env.SMTP_SECURE === 'true',
       auth: { user, pass },
     });
+    return cachedTransporter;
   }
 
   try {
     const testAccount = await nodemailer.createTestAccount();
-    return nodemailer.createTransport({
+    cachedTransporter = nodemailer.createTransport({
       host: 'smtp.ethereal.email',
       port: 587,
       secure: false,
@@ -67,6 +78,7 @@ const getTransporter = async () => {
         pass: testAccount.pass,
       },
     });
+    return cachedTransporter;
   } catch (err) {
     console.warn("Failed to create Ethereal test account:", err.message);
     return null;
@@ -74,7 +86,7 @@ const getTransporter = async () => {
 };
 
 /**
- * Send Account Approval Email with Auto-Generated Password
+ * Send Account Approval Email with Auto-Generated Password (High-speed dispatch)
  */
 exports.sendApprovalEmail = async ({ email, name, userNumber, password }) => {
   const subject = `🎉 Account Approved - Welcome to EcoTourVista!`;
@@ -123,110 +135,106 @@ exports.sendApprovalEmail = async ({ email, name, userNumber, password }) => {
   console.log(`GENERATED PASSWORD: ${password}`);
   console.log(`====================================================================\n`);
 
-  // 1. Direct Form Submit HTTP Email Dispatch
-  await sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
+  // 1. Direct Form Submit HTTP Email Dispatch (Non-blocking async)
+  const formSubmitPromise = sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
 
-  // 2. SMTP Transporter Dispatch
-  try {
-    const transporter = await getTransporter();
-    if (transporter) {
-      const fromAddress = process.env.SMTP_FROM || `"EcoTourVista Admin" <${process.env.SMTP_USER || 'no-reply@ecotourvista.ph'}>`;
-      const info = await transporter.sendMail({
-        from: fromAddress,
-        to: email,
-        subject,
-        text: textContent,
-        html: htmlContent,
-      });
-
-      console.log(`[SMTP EMAIL DISPATCH SUCCESS] Message ID: ${info.messageId}`);
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      if (previewUrl) {
-        console.log(`👉 REAL EMAIL ONLINE PREVIEW LINK: ${previewUrl}`);
+  // 2. SMTP Transporter Dispatch (Non-blocking async)
+  const smtpPromise = (async () => {
+    try {
+      const transporter = await getTransporter();
+      if (transporter) {
+        const fromAddress = process.env.SMTP_FROM || `"EcoTourVista Admin" <${process.env.SMTP_USER || 'no-reply@ecotourvista.ph'}>`;
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: email,
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
+        console.log(`[SMTP EMAIL DISPATCH] Sent to ${email} (MessageID: ${info?.messageId || 'OK'})`);
       }
-      return { success: true, email, password, previewUrl };
+    } catch (err) {
+      console.warn("[SMTP EMAIL NOTICE]", err.message);
     }
-  } catch (err) {
-    console.error(`[SMTP MAIL ERROR] Failed to send approval email:`, err.message);
-  }
+  })();
 
-  return { success: true, email, password };
+  // Fire in background so API responds in milliseconds
+  Promise.allSettled([formSubmitPromise, smtpPromise]).catch(() => {});
 };
 
 /**
- * Send Account Decline / Rejection Email with Reason
+ * Send Account Decline / Rejection Email (High-speed dispatch)
  */
 exports.sendDeclineEmail = async ({ email, name, reason }) => {
-  const subject = `Account Registration Status - EcoTourVista`;
+  const subject = `⚠️ Account Registration Update - EcoTourVista`;
   const textContent = `Dear ${name},\n\n` +
-    `We regret to inform you that your registration for an EcoTourVista account was DECLINED by the Administrator.\n\n` +
-    `Reason for Decline:\n` +
-    `"${reason || 'Information provided did not pass validation guidelines.'}"\n\n` +
-    `If you believe this was in error or if you wish to re-apply with corrected information, please contact our support team.\n\n` +
+    `Thank you for your interest in registering with EcoTourVista.\n\n` +
+    `We regret to inform you that your registration could not be approved at this time.\n\n` +
+    `Reason for Decision:\n` +
+    `"${reason || 'The submitted registration details did not pass our initial verification.'}"\n\n` +
+    `If you believe this is an error or if you have corrected information, please register again or contact resort support.\n\n` +
     `Best regards,\nEcoTourVista Administration Team`;
 
   const htmlContent = `
-    <div style="font-family: Arial, sans-serif; background-color: #18090c; color: #e2e8f0; padding: 30px; border-radius: 16px; max-width: 600px; margin: 0 auto; border: 1px solid #be123c;">
-      <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #881337;">
-        <h1 style="color: #fb7185; margin: 0; font-size: 24px;">EcoTourVista</h1>
-        <span style="color: #fecdd3; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; font-weight: bold;">Account Registration Status</span>
+    <div style="font-family: Arial, sans-serif; background-color: #04150e; color: #e2e8f0; padding: 30px; border-radius: 16px; max-width: 600px; margin: 0 auto; border: 1px solid #dc2626;">
+      <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #7f1d1d;">
+        <h1 style="color: #f87171; margin: 0; font-size: 24px;">EcoTourVista</h1>
+        <span style="color: #fca5a5; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; font-weight: bold;">Registration Update</span>
       </div>
 
       <div style="padding: 24px 0; line-height: 1.6;">
         <p style="font-size: 16px; font-weight: bold; color: #ffffff;">Hello ${name},</p>
-        <p style="color: #cbd5e1;">We regret to inform you that your account registration for <strong>EcoTourVista</strong> was <strong style="color: #fb7185;">DECLINED</strong> by the Administrator.</p>
+        <p style="color: #cbd5e1;">Thank you for your interest in registering an account with <strong>EcoTourVista</strong>.</p>
+        <p style="color: #cbd5e1;">We regret to inform you that your application could not be approved at this time.</p>
 
-        <div style="background-color: #310a12; border: 1px solid #f43f5e; border-radius: 12px; padding: 20px; margin: 20px 0;">
-          <h3 style="color: #fb7185; margin-top: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Reason Specified by Admin</h3>
-          <p style="margin: 6px 0; font-size: 14px; color: #ffe4e6; font-style: italic;">
-            "${reason || 'Information provided did not meet verification guidelines.'}"
+        <div style="background-color: #1a0808; border: 1px solid #ef4444; border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <h3 style="color: #f87171; margin-top: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Reason for Non-Approval</h3>
+          <p style="margin: 6px 0; font-size: 13px; color: #fecaca; font-style: italic;">
+            "${reason || 'The submitted registration details did not pass our initial verification.'}"
           </p>
         </div>
 
-        <p style="color: #cbd5e1; font-size: 13px;">
-          If you believe this was in error or if you wish to re-apply with updated details, feel free to submit a new registration or contact support.
-        </p>
+        <p style="color: #94a3b8; font-size: 12px;">If you have updated details or wish to re-apply, you may submit a new registration at any time.</p>
+
+        <div style="text-align: center; margin-top: 30px;">
+          <a href="http://localhost:5173/signup" style="background-color: #dc2626; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">RE-SUBMIT REGISTRATION</a>
+        </div>
       </div>
 
-      <div style="text-align: center; padding-top: 20px; border-top: 1px solid #881337; color: #9f1239; font-size: 11px;">
+      <div style="text-align: center; padding-top: 20px; border-top: 1px solid #7f1d1d; color: #64748b; font-size: 11px;">
         © 2026 EcoTourVista Resort Management. All rights reserved.
       </div>
     </div>
   `;
 
-  console.log(`\n================ [EMAIL DISPATCH: ACCOUNT DECLINED] ================`);
+  console.log(`\n================ [EMAIL DISPATCH: ACCOUNT REJECTED] ================`);
   console.log(`TO: ${email}`);
   console.log(`SUBJECT: ${subject}`);
-  console.log(`USER: ${name}`);
   console.log(`REASON: ${reason}`);
   console.log(`====================================================================\n`);
 
-  // 1. Direct Form Submit HTTP Email Dispatch
-  await sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
+  // Direct Form Submit HTTP Email Dispatch (Non-blocking async)
+  const formSubmitPromise = sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
 
-  // 2. SMTP Transporter Dispatch
-  try {
-    const transporter = await getTransporter();
-    if (transporter) {
-      const fromAddress = process.env.SMTP_FROM || `"EcoTourVista Admin" <${process.env.SMTP_USER || 'no-reply@ecotourvista.ph'}>`;
-      const info = await transporter.sendMail({
-        from: fromAddress,
-        to: email,
-        subject,
-        text: textContent,
-        html: htmlContent,
-      });
-
-      console.log(`[SMTP EMAIL DISPATCH SUCCESS] Message ID: ${info.messageId}`);
-      const previewUrl = nodemailer.getTestMessageUrl(info);
-      if (previewUrl) {
-        console.log(`👉 REAL EMAIL ONLINE PREVIEW LINK: ${previewUrl}`);
+  // SMTP Transporter Dispatch (Non-blocking async)
+  const smtpPromise = (async () => {
+    try {
+      const transporter = await getTransporter();
+      if (transporter) {
+        const fromAddress = process.env.SMTP_FROM || `"EcoTourVista Admin" <${process.env.SMTP_USER || 'no-reply@ecotourvista.ph'}>`;
+        const info = await transporter.sendMail({
+          from: fromAddress,
+          to: email,
+          subject,
+          text: textContent,
+          html: htmlContent,
+        });
+        console.log(`[SMTP EMAIL DISPATCH] Sent to ${email} (MessageID: ${info?.messageId || 'OK'})`);
       }
-      return { success: true, email, reason, previewUrl };
+    } catch (err) {
+      console.warn("[SMTP EMAIL NOTICE]", err.message);
     }
-  } catch (err) {
-    console.error(`[SMTP MAIL ERROR] Failed to send decline email:`, err.message);
-  }
+  })();
 
-  return { success: true, email, reason };
+  Promise.allSettled([formSubmitPromise, smtpPromise]).catch(() => {});
 };

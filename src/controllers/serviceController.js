@@ -3,10 +3,10 @@ const db = require("../config/database");
 // GET ALL SERVICES
 exports.getAllServices = async (req, res, next) => {
   try {
-    const [rows] = await db.query("SELECT * FROM services ORDER BY service_code ASC");
+    const [rows] = await db.query("CALL sp_get_all_services()");
     res.status(200).json({
       success: true,
-      services: rows,
+      services: rows[0] || [],
     });
   } catch (err) {
     next(err);
@@ -17,7 +17,7 @@ exports.getAllServices = async (req, res, next) => {
 exports.createService = async (req, res, next) => {
   try {
     const { service_code, service_name, category, description, price, unit, total_capacity, image_url, status } = req.body;
-    
+
     if (!service_name || !price) {
       return res.status(400).json({ success: false, message: "Service name and price are required." });
     }
@@ -26,15 +26,16 @@ exports.createService = async (req, res, next) => {
     const cap = parseInt(total_capacity || 10, 10);
 
     const [result] = await db.query(
-      `INSERT INTO services (service_code, service_name, category, description, price, unit, total_capacity, available_qty, image_url, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [code, service_name, category || "Rental", description || "", price, unit || "unit", cap, cap, image_url || "/src/assets/images/services/cottage.png", status || "Active"]
+      "CALL sp_create_service(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [code, service_name, category || "Rental", description || "", price, unit || "unit", cap, image_url || "/src/assets/images/services/cottage.png", status || "Active"]
     );
+
+    const insertId = result[0] && result[0][0] ? result[0][0].service_id : null;
 
     res.status(201).json({
       success: true,
       message: "Service created successfully",
-      service_id: result.insertId,
+      service_id: insertId,
     });
   } catch (err) {
     next(err);
@@ -48,12 +49,13 @@ exports.updateService = async (req, res, next) => {
     const { service_name, category, description, price, unit, total_capacity, available_qty, status } = req.body;
 
     const [result] = await db.query(
-      `UPDATE services SET service_name=?, category=?, description=?, price=?, unit=?, total_capacity=?, available_qty=?, status=?
-       WHERE service_id=? OR id=?`,
-      [service_name, category, description, price, unit, total_capacity, available_qty, status, id, id]
+      "CALL sp_update_service(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, service_name || null, category || null, description || null, price || null, unit || null, total_capacity || null, available_qty || null, status || null]
     );
 
-    if (result.affectedRows === 0) {
+    const affectedRows = result[0] && result[0][0] ? result[0][0].affected_rows : 0;
+
+    if (affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Service not found" });
     }
 
@@ -67,7 +69,7 @@ exports.updateService = async (req, res, next) => {
 exports.deleteService = async (req, res, next) => {
   try {
     const { id } = req.params;
-    await db.query("DELETE FROM services WHERE service_id=? OR id=?", [id, id]);
+    await db.query("CALL sp_delete_service(?)", [id]);
     res.status(200).json({ success: true, message: "Service deleted successfully" });
   } catch (err) {
     next(err);

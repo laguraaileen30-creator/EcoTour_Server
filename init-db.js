@@ -50,6 +50,9 @@ async function initDatabase() {
       if (!colNames.includes("rejection_reason")) {
         await connection.query("ALTER TABLE users ADD COLUMN rejection_reason TEXT NULL");
       }
+      if (!colNames.includes("profile_pic")) {
+        await connection.query("ALTER TABLE users ADD COLUMN profile_pic LONGTEXT NULL AFTER image_url");
+      }
       if (colNames.includes("username")) {
         await connection.query("ALTER TABLE users MODIFY COLUMN username VARCHAR(100) NULL DEFAULT NULL");
       }
@@ -102,23 +105,33 @@ async function initDatabase() {
     `);
 
     // 3. TABLE: BOOKINGS
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS bookings (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        booking_number VARCHAR(30) UNIQUE NOT NULL,
-        user_id INT NULL,
-        client_name VARCHAR(100) NOT NULL,
-        client_email VARCHAR(100),
-        client_phone VARCHAR(20),
-        booking_date DATE NOT NULL,
-        arrival_time VARCHAR(20),
-        pax INT DEFAULT 1,
-        total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-        payment_method VARCHAR(30) DEFAULT 'Cash',
-        status ENUM('Pending', 'Confirmed', 'Checked In', 'Completed', 'Cancelled', 'Rejected') DEFAULT 'Pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
+    const [bookingTables] = await connection.query("SHOW TABLES LIKE 'bookings'");
+    if (bookingTables.length > 0) {
+      await connection.query("ALTER TABLE bookings MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'Pending'");
+      const [cols] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'updated_at'");
+      if (cols.length === 0) {
+        await connection.query("ALTER TABLE bookings ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+      }
+    } else {
+      await connection.query(`
+        CREATE TABLE bookings (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          booking_number VARCHAR(30) UNIQUE NOT NULL,
+          user_id INT NULL,
+          client_name VARCHAR(100) NOT NULL,
+          client_email VARCHAR(100),
+          client_phone VARCHAR(20),
+          booking_date DATE NOT NULL,
+          arrival_time VARCHAR(20),
+          pax INT DEFAULT 1,
+          total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+          payment_method VARCHAR(30) DEFAULT 'Cash',
+          status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `);
+    }
 
     // 4. TABLE: BOOKING_ITEMS
     await connection.query(`

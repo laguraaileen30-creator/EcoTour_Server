@@ -17,6 +17,10 @@ const paymentRoutes = require('./src/routes/paymentRoutes');
 const galleryRoutes = require('./src/routes/galleryRoutes');
 const reportRoutes = require('./src/routes/reportRoutes');
 const dashboardRoutes = require('./src/routes/dashboardRoutes');
+const announcementRoutes = require('./src/routes/announcementRoutes');
+const settingRoutes = require('./src/routes/settingRoutes');
+const auditLogRoutes = require('./src/routes/auditLogRoutes');
+const notificationRoutes = require('./src/routes/notificationRoutes');
 const notFoundMiddleware = require('./src/middleware/notFoundMiddleware');
 const errorMiddleware = require('./src/middleware/errorMiddleware');
 
@@ -35,9 +39,11 @@ const createApp = () => {
 
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 200,
+    max: 50000,
     standardHeaders: true,
     legacyHeaders: false,
+    message: { success: false, message: 'Too many requests from this IP, please try again later.' },
+    skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1' || req.path === '/health' || req.path.startsWith('/api/v1/auth'),
   });
   app.use(limiter);
 
@@ -53,6 +59,11 @@ const createApp = () => {
   app.use('/api/v1/gallery', galleryRoutes);
   app.use('/api/v1/reports', reportRoutes);
   app.use('/api/v1/dashboard', dashboardRoutes);
+  app.use('/api/v1/announcements', announcementRoutes);
+  app.use('/api/v1/settings', settingRoutes);
+  app.use('/api/v1/audit_logs', auditLogRoutes);
+  app.use('/api/v1/tourist_spots', require('./src/routes/touristSpotRoutes'));
+  app.use('/api/v1/notifications', notificationRoutes);
 
   app.use(notFoundMiddleware);
   app.use(errorMiddleware);

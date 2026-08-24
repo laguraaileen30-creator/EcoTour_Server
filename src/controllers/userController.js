@@ -9,53 +9,144 @@ exports.getProfile = async (req, res) => {
   });
 };
 
-exports.updateProfile = async (req, res) => {
-  res.status(200).json({ message: 'Profile update endpoint ready' });
-};
-
-// GET ALL USERS (Admin / List API with search & filter)
-exports.getAllUsers = async (req, res, next) => {
+// UPDATE USER PROFILE & PASSWORD
+exports.updateProfile = async (req, res, next) => {
   try {
-    const { status, role, search } = req.query;
-    let query = "SELECT user_id, user_number, client_no, fname, mname, lname, contact_no, address, gender, role, email, status, account_status, created_by, approved_by, approved_at, rejection_reason, created_at FROM users";
-    const params = [];
-    const conditions = [];
+    const userId = req.body.user_id || req.params.id || (req.user && req.user.user_id);
+    const {
+      fname,
+      mname,
+      lname,
+      email,
+      contact_no,
+      address,
+      gender,
+      current_password,
+      new_password
+    } = req.body;
 
-    if (status) {
-      conditions.push("LOWER(status) = LOWER(?)");
-      params.push(status);
-    }
-    if (role) {
-      conditions.push("LOWER(role) = LOWER(?)");
-      params.push(role);
-    }
-    if (search) {
-      conditions.push("(user_number LIKE ? OR client_no LIKE ? OR fname LIKE ? OR lname LIKE ? OR email LIKE ? OR contact_no LIKE ?)");
-      const term = `%${search}%`;
-      params.push(term, term, term, term, term, term);
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
     }
 
-    if (conditions.length > 0) {
-      query += " WHERE " + conditions.join(" AND ");
+    // Fetch user record via SP
+    const [userRows] = await db.query("CALL sp_get_user_by_id(?)", [userId]);
+    const userResult = userRows[0];
+    if (!userResult || userResult.length === 0) {
+      return res.status(404).json({ success: false, message: "User account not found" });
+    }
+    const user = userResult[0];
+
+    // Update profile fields via SP
+    await db.query(
+      "CALL sp_update_user_profile(?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        user.user_id,
+        fname   !== undefined ? fname   : null,
+        mname   !== undefined ? mname   : null,
+        lname   !== undefined ? lname   : null,
+        email   !== undefined ? email   : null,
+        contact_no !== undefined ? contact_no : null,
+        address !== undefined ? address : null,
+        gender  !== undefined ? gender  : null,
+      ]
+    );
+
+    // If new password is provided, hash & update via SP
+    if (new_password && new_password.trim().length > 0) {
+      const hashedPassword = await bcrypt.hash(new_password.trim(), 10);
+      await db.query("CALL sp_update_user_password(?, ?)", [user.user_id, hashedPassword]);
     }
 
-    query += " ORDER BY created_at DESC";
+    // If profile picture / avatar is provided, store in database
+    const avatar = req.body.profile_pic || req.body.avatar_url || req.body.avatarUrl;
+    if (avatar !== undefined) {
+      try {
+        await db.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic LONGTEXT NULL");
+      } catch (colErr) {}
+      try {
+        await db.query("UPDATE users SET profile_pic = ? WHERE user_id = ?", [avatar, user.user_id]);
+      } catch (picErr) {
+        console.warn("Profile pic update note:", picErr.message);
+      }
+    }
 
-    const [rows] = await db.query(query, params);
+    // Fetch updated record
+    const [updatedRows] = await db.query("CALL sp_get_user_by_id(?)", [user.user_id]);
+    const updatedResult = updatedRows[0];
+    const updatedUser = updatedResult && updatedResult[0] ? updatedResult[0] : user;
+    const fullName = `${updatedUser.fname || ''} ${updatedUser.lname || ''}`.trim() || updatedUser.email;
+
     res.status(200).json({
       success: true,
-      users: rows,
+      message: "User profile updated and saved to database successfully",
+      user: {
+        ...updatedUser,
+        profile_pic: avatar || updatedUser.profile_pic || updatedUser.avatarUrl,
+        avatarUrl: avatar || updatedUser.profile_pic || updatedUser.avatarUrl,
+        name: fullName
+      }
     });
   } catch (err) {
     next(err);
   }
 };
 
-// UPDATE USER STATUS (Approve with Auto-Generated Password, Decline with Reason & Email Notification)
+// GET ALL USERS (Admin / List API with search & filter)
+exports.getAllUsers = async (req, res, next) => {
+  try {
+    const { status, role, search } = req.query;
+
+    let rows;
+
+    if (search) {
+      // Use search SP
+      const [searchRows] = await db.query("CALL sp_search_users(?)", [search]);
+      rows = searchRows[0] || [];
+    } else {
+      // Use list SP with optional status/role filters
+      const [listRows] = await db.query("CALL sp_get_all_users(?, ?)", [
+        status || null,
+        role   || null,
+      ]);
+      rows = listRows[0] || [];
+    }
+
+    // Ensure every user has a permanent fixed autogenerated ID number
+    const formattedUsers = await Promise.all(rows.map(async (u) => {
+      const roleLower = (u.role || "client").toLowerCase();
+      const prefix = roleLower === "staff" ? "STF" : roleLower === "admin" ? "ADM" : "CLT";
+      const fallbackId = `${prefix}-2026-${String(u.user_id).padStart(6, "0")}`;
+      const finalId = u.user_number || fallbackId;
+
+      // Backfill user_number if missing
+      if (!u.user_number) {
+        try {
+          await db.query("UPDATE users SET user_number = ? WHERE user_id = ?", [finalId, u.user_id]);
+        } catch (e) {}
+      }
+
+      return {
+        ...u,
+        user_number: finalId,
+        client_no: finalId,
+      };
+    }));
+
+    res.status(200).json({
+      success: true,
+      users: formattedUsers,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// UPDATE USER STATUS (Approve / Reject / Suspend) with Email Notification
 exports.updateUserStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { status, reason, approved_by = "Admin" } = req.body; // 'Approved', 'Rejected', 'Suspended', 'Pending'
+    const { status, reason, approved_by = "Admin" } = req.body;
 
     const validStatuses = ["pending", "approved", "rejected", "suspended"];
     const targetStatus = (status || "").trim();
@@ -69,44 +160,43 @@ exports.updateUserStatus = async (req, res, next) => {
 
     const formattedStatus = targetStatus.charAt(0).toUpperCase() + targetStatus.slice(1).toLowerCase();
 
-    // Fetch existing user record first
-    const [userRows] = await db.query("SELECT * FROM users WHERE user_id = ? OR user_number = ?", [id, id]);
+    // Fetch existing user record
+    const [userRows] = await db.query("CALL sp_get_user_by_id(?)", [id]);
+    const userResult = userRows[0];
 
-    if (userRows.length === 0) {
+    if (!userResult || userResult.length === 0) {
       return res.status(404).json({
         success: false,
         message: "User account not found.",
       });
     }
 
-    const user = userRows[0];
+    const user = userResult[0];
     let generatedPassword = null;
+    let passwordHash = null;
 
     if (formattedStatus === "Approved") {
       // Auto-generate default password: lastname + firstname + 123 (lowercase, no spaces)
       const fnameStr = (user.fname || "").trim();
       const lnameStr = (user.lname || "").trim();
       generatedPassword = (lnameStr + fnameStr + "123").toLowerCase().replace(/\s+/g, "");
+      passwordHash = await bcrypt.hash(generatedPassword, 10);
+    }
 
-      // Hash password using bcrypt
-      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+    // Update status via SP
+    await db.query(
+      "CALL sp_update_user_status(?, ?, ?, ?, ?)",
+      [user.user_id, formattedStatus, approved_by, reason || null, passwordHash]
+    );
 
-      await db.query(
-        "UPDATE users SET status = ?, account_status = 'Active', password = ?, approved_by = ?, approved_at = NOW() WHERE user_id = ?",
-        [formattedStatus, hashedPassword, approved_by, user.user_id]
-      );
-
-      // Dispatch Approval Email Notification
-      try {
-        await emailService.sendApprovalEmail({
-          email: user.email,
-          name: `${user.fname} ${user.lname}`.trim(),
-          userNumber: user.user_number || user.client_no || `CLT-${user.user_id}`,
-          password: generatedPassword,
-        });
-      } catch (eErr) {
-        console.warn("Failed to dispatch approval email:", eErr.message);
-      }
+    if (formattedStatus === "Approved") {
+      // Dispatch Approval Email Notification asynchronously (non-blocking)
+      emailService.sendApprovalEmail({
+        email: user.email,
+        name: `${user.fname} ${user.lname}`.trim(),
+        userNumber: user.user_number || `CLT-${user.user_id}`,
+        password: generatedPassword,
+      }).catch(eErr => console.warn("Email dispatch notice:", eErr.message));
 
       return res.status(200).json({
         success: true,
@@ -118,21 +208,11 @@ exports.updateUserStatus = async (req, res, next) => {
     } else if (formattedStatus === "Rejected") {
       const declineReason = reason || "Information provided did not meet verification criteria.";
 
-      await db.query(
-        "UPDATE users SET status = ?, account_status = 'Inactive', rejection_reason = ? WHERE user_id = ?",
-        [formattedStatus, declineReason, user.user_id]
-      );
-
-      // Dispatch Decline Email Notification
-      try {
-        await emailService.sendDeclineEmail({
-          email: user.email,
-          name: `${user.fname} ${user.lname}`.trim(),
-          reason: declineReason,
-        });
-      } catch (eErr) {
-        console.warn("Failed to dispatch decline email:", eErr.message);
-      }
+      emailService.sendDeclineEmail({
+        email: user.email,
+        name: `${user.fname} ${user.lname}`.trim(),
+        reason: declineReason,
+      }).catch(eErr => console.warn("Email decline notice:", eErr.message));
 
       return res.status(200).json({
         success: true,
@@ -142,17 +222,51 @@ exports.updateUserStatus = async (req, res, next) => {
         reason: declineReason,
       });
     } else {
-      const accStatus = formattedStatus === "Pending" ? "Inactive" : "Inactive";
-      await db.query("UPDATE users SET status = ?, account_status = ? WHERE user_id = ?", [formattedStatus, accStatus, user.user_id]);
-
       return res.status(200).json({
         success: true,
         message: `Account status updated to ${formattedStatus}.`,
         status: formattedStatus,
-        account_status: accStatus,
+        account_status: "Inactive",
       });
     }
   } catch (err) {
     next(err);
+  }
+};
+
+exports.sendUserCredentialsEmail = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [userRows] = await db.query(
+      "SELECT user_id, user_number, fname, lname, email, role, status FROM users WHERE user_id = ? OR user_number = ?",
+      [id, id]
+    );
+
+    if (!userRows || userRows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    const user = userRows[0];
+    const fname = user.fname || "";
+    const lname = user.lname || "";
+    const generatedPassword = (lname.trim() + fname.trim() + "123").toLowerCase().replace(/\s+/g, "") || "user123";
+    const userNumber = user.user_number || `CLT-${user.user_id}`;
+
+    emailService.sendApprovalEmail({
+      email: user.email,
+      name: `${fname} ${lname}`.trim() || user.email,
+      userNumber,
+      password: generatedPassword,
+    }).catch((e) => console.warn("Credentials email dispatch notice:", e.message));
+
+    return res.status(200).json({
+      success: true,
+      message: `Login credentials sent to ${user.email}`,
+      email: user.email,
+      userNumber,
+      password: generatedPassword,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
