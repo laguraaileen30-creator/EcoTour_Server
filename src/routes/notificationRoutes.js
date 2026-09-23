@@ -1,11 +1,14 @@
 const express = require('express');
-const router = express.Router();
+const requireRole = require('../middleware/requireRole');
 const {
   getUserNotifications,
   markAsRead,
   markAllAsRead,
   createNotification
 } = require('../controllers/notificationController');
+
+const router = express.Router();
+router.use(requireRole());
 
 router.get('/', getUserNotifications);
 router.post('/', createNotification);

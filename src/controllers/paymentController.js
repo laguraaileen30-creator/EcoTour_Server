@@ -1,3 +1,4 @@
+const { getScope, ownsBooking } = require('../services/accessScope');
 const db = require('../config/database');
 
 // Create / Save Receipt Payment Record to Database
@@ -85,7 +86,13 @@ exports.createPayment = async (req, res) => {
 exports.getPayments = async (req, res) => {
   try {
     const [rows] = await db.query('CALL sp_get_all_payments()');
-    const payments = rows[0] || [];
+    let payments = rows[0] || [];
+    const scope = await getScope(req);
+    if (!scope.isStaff) {
+      const [own] = await db.query('SELECT id, user_id, client_email FROM bookings');
+      const ownIds = new Set(own.filter((b) => ownsBooking(scope, b)).map((b) => b.id));
+      payments = payments.filter((p) => p.booking_id && ownIds.has(p.booking_id));
+    }
 
     const formatDateStr = (d) => {
       if (!d) return '';

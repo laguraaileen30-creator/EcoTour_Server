@@ -1,8 +1,10 @@
 const express = require('express');
-const router = express.Router();
+const requireRole = require('../middleware/requireRole');
 const settingController = require('../controllers/settingController');
 
+const router = express.Router();
+
 router.get('/', settingController.getSettings);
-router.put('/', settingController.updateSettings);
+router.put('/', requireRole('admin'), settingController.updateSettings);
 
 module.exports = router;

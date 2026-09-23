@@ -1,3 +1,6 @@
+-- SUPERSEDED: this file is out of date. Use src/database/ecotour_schema.sql, ecotour_procedures.sql and ecotour_seed.sql
+-- (regenerate with `npm run db:export`, apply upgrades with `npm run migrate`).
+
 /*
   ╔══════════════════════════════════════════════════════════════════════════════╗
   ║          ECOTOUR — MySQL 8.0.46 Stored Procedures                           ║
@@ -225,7 +228,7 @@ CREATE PROCEDURE `sp_get_booking_items_bulk`(
 )
 BEGIN
   SET @sql = CONCAT(
-    'SELECT id, booking_id, service_id, service_name, unit_price, quantity, subtotal '
+    'SELECT id, booking_id, service_id, service_name, unit_price, quantity, subtotal, item_type '
     'FROM booking_items WHERE booking_id IN (', p_booking_ids, ')'
   );
   PREPARE stmt FROM @sql;
@@ -364,9 +367,7 @@ BEGIN
   VALUES
     (v_payment_id, p_total_amount, v_park_share, v_barangay, v_guide);
 
-  IF p_booking_id IS NOT NULL AND p_booking_id > 0 THEN
-    UPDATE bookings SET status = 'Completed' WHERE id = p_booking_id;
-  END IF;
+  -- Booking status is managed by the reservation workflow, not by payments
 
   INSERT INTO audit_logs (action, description)
   VALUES (

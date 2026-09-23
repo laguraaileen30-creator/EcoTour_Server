@@ -1,4 +1,5 @@
 const express = require('express');
+const requireRole = require('../middleware/requireRole');
 const {
   getDailyRevenue,
   getMonthlyRevenue,
@@ -8,6 +9,7 @@ const {
 } = require('../controllers/reportController');
 
 const router = express.Router();
+router.use(requireRole('admin', 'staff'));
 
 router.get('/', getDailyRevenue);
 router.get('/daily-revenue', getDailyRevenue);

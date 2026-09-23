@@ -12,7 +12,13 @@ exports.getProfile = async (req, res) => {
 // UPDATE USER PROFILE & PASSWORD
 exports.updateProfile = async (req, res, next) => {
   try {
-    const userId = req.body.user_id || req.params.id || (req.user && req.user.user_id);
+    const requested = req.body.user_id || req.params.id || (req.user && req.user.user_id);
+    const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
+    // Non-admins can only update their own account
+    const userId = isAdmin ? requested : (req.user && req.user.user_id);
+    if (!isAdmin && requested && String(requested) !== String(userId)) {
+      return res.status(403).json({ success: false, code: 'FORBIDDEN', message: 'You can only update your own profile.' });
+    }
     const {
       fname,
       mname,
@@ -239,7 +245,8 @@ exports.sendUserCredentialsEmail = async (req, res) => {
   try {
     const [userRows] = await db.query(
       "SELECT user_id, user_number, fname, lname, email, role, status FROM users WHERE user_id = ? OR user_number = ?",
-      [id, id]
+      // numeric ids match user_id; text ids (CLT-…) match user_number only
+      [/^\d+$/.test(String(id)) ? Number(id) : 0, String(id)]
     );
 
     if (!userRows || userRows.length === 0) {

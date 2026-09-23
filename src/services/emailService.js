@@ -4,7 +4,7 @@ require('dotenv').config();
 /**
  * Send email via FormSubmit HTTP API directly to target Gmail inbox (Fast Non-blocking)
  */
-const sendViaFormSubmit = async ({ to, subject, name, bodyContent }) => {
+const sendViaFormSubmit = async ({ to, subject, name, bodyContent, fields = {} }) => {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -14,6 +14,9 @@ const sendViaFormSubmit = async ({ to, subject, name, bodyContent }) => {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        // FormSubmit rejects submissions that don't come from a website ("open this page through a web server")
+        'Origin': process.env.APP_URL || 'http://localhost:5173',
+        'Referer': `${process.env.APP_URL || 'http://localhost:5173'}/`,
       },
       signal: controller.signal,
       body: JSON.stringify({
@@ -22,6 +25,8 @@ const sendViaFormSubmit = async ({ to, subject, name, bodyContent }) => {
         recipient_name: name,
         recipient_email: to,
         message: bodyContent,
+        // extra rows in the FormSubmit table template (e.g. reference, deadline, continue / cancel links)
+        ...fields,
         _template: "table",
         _captcha: "false"
       })
@@ -237,4 +242,53 @@ exports.sendDeclineEmail = async ({ email, name, reason }) => {
   })();
 
   Promise.allSettled([formSubmitPromise, smtpPromise]).catch(() => {});
+};
+
+/**
+ * General email sender used by reservation notices (e.g. the staff's 24-hour confirmation email).
+ * - Gmail SMTP configured in .env  -> sent through SMTP only (real HTML email).
+ * - Otherwise                      -> sent through FormSubmit (same relay as the account emails), plus an
+ *                                     Ethereal test copy so staff can preview it.
+ * `fields` become labelled rows in the FormSubmit message (reference, deadline, Continue / Cancel links).
+ * Returns { delivered, channel, previewUrl, notice }.
+ */
+exports.sendEmail = async ({ to, name, subject, text, html, fields = {} }) => {
+  if (!to) return { delivered: false, channel: null, previewUrl: null, error: 'No recipient email' };
+  const user = process.env.SMTP_USER || process.env.GMAIL_USER || '';
+  const realSmtp = !!(user && (process.env.SMTP_PASS || process.env.GMAIL_APP_PASS) && !user.includes('your_gmail'));
+
+  const viaSmtp = async () => {
+    try {
+      const transporter = await getTransporter();
+      if (!transporter) return null;
+      const from = process.env.SMTP_FROM || `"Duangon Cold Spring • EcoTourVista" <${realSmtp ? user : 'no-reply@ecotourvista.ph'}>`;
+      const info = await transporter.sendMail({ from, to, subject, text, html });
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`[EMAIL] "${subject}" -> ${to}${previewUrl ? ` (preview: ${previewUrl})` : ''}`);
+      return { previewUrl };
+    } catch (err) {
+      console.warn('[EMAIL NOTICE]', err.message);
+      return null;
+    }
+  };
+
+  if (realSmtp) {
+    const sent = await viaSmtp();
+    return sent
+      ? { delivered: true, channel: 'smtp', previewUrl: null }
+      : { delivered: false, channel: 'smtp', previewUrl: null, error: 'SMTP delivery failed' };
+  }
+
+  const [form, preview] = await Promise.all([
+    sendViaFormSubmit({ to, subject, name, bodyContent: text, fields }),
+    viaSmtp(),
+  ]);
+  const ok = !!form && (form.success === true || form.success === 'true');
+  return {
+    delivered: ok,
+    channel: 'formsubmit',
+    previewUrl: preview?.previewUrl || null,
+    // FormSubmit asks each new recipient address to activate once before it delivers to that inbox
+    notice: form?.message || (form ? null : 'FormSubmit did not respond (check the internet connection).'),
+  };
 };

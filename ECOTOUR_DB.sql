@@ -1,3 +1,6 @@
+-- SUPERSEDED: this file is out of date. Use src/database/ecotour_schema.sql, ecotour_procedures.sql and ecotour_seed.sql
+-- (regenerate with `npm run db:export`, apply upgrades with `npm run migrate`).
+
 /*
 SQLyog Ultimate v9.62 
 MySQL - 8.0.46 : Database - ecotour_db

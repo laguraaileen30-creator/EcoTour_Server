@@ -6,8 +6,10 @@ const db = require('../config/database');
  */
 exports.getUserNotifications = async (req, res, next) => {
   try {
-    const userId = req.query.user_id || req.user?.user_id || req.user?.id || 0;
-    const role = (req.query.role || req.user?.role || 'client').toLowerCase();
+    // Notifications are always read for the logged-in user; only admins may inspect another user/role
+    const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
+    const userId = (isAdmin && req.query.user_id) || req.user?.user_id || req.user?.id || 0;
+    const role = ((isAdmin && req.query.role) || req.user?.role || 'client').toLowerCase();
 
     // Call stored procedure
     const [results] = await db.query('CALL sp_get_user_notifications(?, ?)', [userId, role]);

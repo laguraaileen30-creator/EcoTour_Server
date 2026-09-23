@@ -21,13 +21,18 @@ const announcementRoutes = require('./src/routes/announcementRoutes');
 const settingRoutes = require('./src/routes/settingRoutes');
 const auditLogRoutes = require('./src/routes/auditLogRoutes');
 const notificationRoutes = require('./src/routes/notificationRoutes');
+const availabilityRoutes = require('./src/routes/availabilityRoutes');
+const packageRoutes = require('./src/routes/packageRoutes');
+const { dealRouter, promotionRouter } = require('./src/routes/dealRoutes');
+const { uploadRouter, UPLOAD_DIR } = require('./src/routes/uploadRoutes');
 const notFoundMiddleware = require('./src/middleware/notFoundMiddleware');
 const errorMiddleware = require('./src/middleware/errorMiddleware');
+const attachUser = require('./src/middleware/attachUser');
 
 const createApp = () => {
   const app = express();
 
-  app.use(helmet());
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(compression());
   app.use(morgan('dev'));
   app.use(cors({ origin: true, credentials: true }));
@@ -47,6 +52,20 @@ const createApp = () => {
   });
   app.use(limiter);
 
+  // Brute-force protection for login / registration (not covered by the general limiter)
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many login attempts. Please wait 15 minutes and try again.' },
+  });
+  app.use('/api/v1/auth/login', authLimiter);
+  app.use('/api/v1/auth/register', authLimiter);
+
+  // Identify the caller from a Bearer token when present (routes decide what requires a login)
+  app.use(attachUser);
+
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', service: 'ecotour-server' });
   });
@@ -64,6 +83,12 @@ const createApp = () => {
   app.use('/api/v1/audit_logs', auditLogRoutes);
   app.use('/api/v1/tourist_spots', require('./src/routes/touristSpotRoutes'));
   app.use('/api/v1/notifications', notificationRoutes);
+  app.use('/api/v1/availability', availabilityRoutes);
+  app.use('/api/v1/packages', packageRoutes);
+  app.use('/api/v1/deals', dealRouter);
+  app.use('/api/v1/promotions', promotionRouter);
+  app.use('/api/v1/uploads', uploadRouter);
+  app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 
   app.use(notFoundMiddleware);
   app.use(errorMiddleware);
