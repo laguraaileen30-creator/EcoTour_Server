@@ -1,10 +1,21 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+const APP_URL = process.env.APP_URL || 'http://localhost:5173';
+const RESORT = {
+  name: 'Duangon Cold Spring Resort',
+  address: 'Duangon, Zamora, Bilar, Bohol, Philippines 6317',
+  contact: '+63 912 345 6789  •  info@coldspringresort.com',
+};
+
 /**
- * Send email via FormSubmit HTTP API directly to target Gmail inbox (Fast Non-blocking)
+ * Send an email through the FormSubmit HTTP API.
+ * FormSubmit only renders plain-text rows (no custom HTML), so the design comes from its "box" template:
+ * every row is its own card, in this order —
+ *   brand header → greeting → message → the caller's rows (details, links) → resort address & help line.
+ * Labels carry an icon so the important rows (deadline, buttons, password) stand out in the inbox.
  */
-const sendViaFormSubmit = async ({ to, subject, name, bodyContent, fields = {} }) => {
+const sendViaFormSubmit = async ({ to, subject, name, intro, fields = {} }) => {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -15,20 +26,20 @@ const sendViaFormSubmit = async ({ to, subject, name, bodyContent, fields = {} }
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         // FormSubmit rejects submissions that don't come from a website ("open this page through a web server")
-        'Origin': process.env.APP_URL || 'http://localhost:5173',
-        'Referer': `${process.env.APP_URL || 'http://localhost:5173'}/`,
+        'Origin': APP_URL,
+        'Referer': `${APP_URL}/`,
       },
       signal: controller.signal,
       body: JSON.stringify({
         _subject: subject,
-        name: "EcoTourVista System",
-        recipient_name: name,
-        recipient_email: to,
-        message: bodyContent,
-        // extra rows in the FormSubmit table template (e.g. reference, deadline, continue / cancel links)
+        _template: 'box',
+        _captcha: 'false',
+        '🌿 EcoTourVista': `${RESORT.name} • Bilar, Bohol`,
+        '👋 Hello': name || 'Guest',
+        '📝 Message': intro,
         ...fields,
-        _template: "table",
-        _captcha: "false"
+        '📍 Resort address': RESORT.address,
+        '📞 Need help?': RESORT.contact,
       })
     });
     clearTimeout(timeoutId);
@@ -101,7 +112,7 @@ exports.sendApprovalEmail = async ({ email, name, userNumber, password }) => {
     `• Assigned ID: ${userNumber}\n` +
     `• Registered Email: ${email}\n` +
     `• Default Password: ${password}\n\n` +
-    `You can now log in at http://localhost:5173/login using your email and default password.\n\n` +
+    `You can now log in at ${APP_URL}/login using your email and default password.\n\n` +
     `Best regards,\nEcoTourVista Administration Team`;
 
   const htmlContent = `
@@ -123,7 +134,7 @@ exports.sendApprovalEmail = async ({ email, name, userNumber, password }) => {
         </div>
 
         <div style="text-align: center; margin-top: 30px;">
-          <a href="http://localhost:5173/login" style="background-color: #059669; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">LOG IN TO YOUR ACCOUNT</a>
+          <a href="${APP_URL}/login" style="background-color: #059669; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">LOG IN TO YOUR ACCOUNT</a>
         </div>
       </div>
 
@@ -141,7 +152,20 @@ exports.sendApprovalEmail = async ({ email, name, userNumber, password }) => {
   console.log(`====================================================================\n`);
 
   // 1. Direct Form Submit HTTP Email Dispatch (Non-blocking async)
-  const formSubmitPromise = sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
+  const formSubmitPromise = sendViaFormSubmit({
+    to: email,
+    subject,
+    name,
+    intro: 'Great news! Your EcoTourVista account has been APPROVED by the resort administrator. Use the login details below to sign in and start booking.',
+    fields: {
+      '✅ Account status': 'APPROVED — ready to use',
+      '🆔 Assigned client ID': userNumber,
+      '📧 Login email': email,
+      '🔑 Temporary password': password,
+      '🔗 Log in here': `${APP_URL}/login`,
+      '🛡️ Security tip': 'Change this temporary password after your first login, and never share it with anyone.',
+    },
+  });
 
   // 2. SMTP Transporter Dispatch (Non-blocking async)
   const smtpPromise = (async () => {
@@ -202,7 +226,7 @@ exports.sendDeclineEmail = async ({ email, name, reason }) => {
         <p style="color: #94a3b8; font-size: 12px;">If you have updated details or wish to re-apply, you may submit a new registration at any time.</p>
 
         <div style="text-align: center; margin-top: 30px;">
-          <a href="http://localhost:5173/signup" style="background-color: #dc2626; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">RE-SUBMIT REGISTRATION</a>
+          <a href="${APP_URL}/signup" style="background-color: #dc2626; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">RE-SUBMIT REGISTRATION</a>
         </div>
       </div>
 
@@ -219,7 +243,18 @@ exports.sendDeclineEmail = async ({ email, name, reason }) => {
   console.log(`====================================================================\n`);
 
   // Direct Form Submit HTTP Email Dispatch (Non-blocking async)
-  const formSubmitPromise = sendViaFormSubmit({ to: email, subject, name, bodyContent: textContent });
+  const formSubmitPromise = sendViaFormSubmit({
+    to: email,
+    subject,
+    name,
+    intro: 'Thank you for your interest in EcoTourVista. After review, your account registration could not be approved at this time.',
+    fields: {
+      '⚠️ Registration status': 'NOT APPROVED',
+      '📋 Reason': reason || 'The submitted registration details did not pass our initial verification.',
+      '🔁 What you can do': 'Correct the details and register again, or contact the resort if you think this is a mistake.',
+      '🔗 Register again': `${APP_URL}/signup`,
+    },
+  });
 
   // SMTP Transporter Dispatch (Non-blocking async)
   const smtpPromise = (async () => {
@@ -249,10 +284,10 @@ exports.sendDeclineEmail = async ({ email, name, reason }) => {
  * - Gmail SMTP configured in .env  -> sent through SMTP only (real HTML email).
  * - Otherwise                      -> sent through FormSubmit (same relay as the account emails), plus an
  *                                     Ethereal test copy so staff can preview it.
- * `fields` become labelled rows in the FormSubmit message (reference, deadline, Continue / Cancel links).
+ * `intro` is the short FormSubmit message and `fields` become its labelled rows (reference, deadline, links).
  * Returns { delivered, channel, previewUrl, notice }.
  */
-exports.sendEmail = async ({ to, name, subject, text, html, fields = {} }) => {
+exports.sendEmail = async ({ to, name, subject, text, html, intro, fields = {} }) => {
   if (!to) return { delivered: false, channel: null, previewUrl: null, error: 'No recipient email' };
   const user = process.env.SMTP_USER || process.env.GMAIL_USER || '';
   const realSmtp = !!(user && (process.env.SMTP_PASS || process.env.GMAIL_APP_PASS) && !user.includes('your_gmail'));
@@ -280,7 +315,7 @@ exports.sendEmail = async ({ to, name, subject, text, html, fields = {} }) => {
   }
 
   const [form, preview] = await Promise.all([
-    sendViaFormSubmit({ to, subject, name, bodyContent: text, fields }),
+    sendViaFormSubmit({ to, subject, name, intro: intro || text, fields }),
     viaSmtp(),
   ]);
   const ok = !!form && (form.success === true || form.success === 'true');

@@ -34,6 +34,9 @@ const formatService = (s, avail) => ({
   availability_date: avail?.date || null,
   capacity_for_date: avail ? avail.total : s.total_capacity,
   booked_for_date: avail ? avail.reserved : 0,
+  in_use_for_date: avail ? avail.inUse || 0 : 0, // on site now (checked in / using), part of booked_for_date
+  upcoming_for_date: avail ? avail.upcoming || 0 : 0, // booked, not arrived yet
+  occupants: avail ? avail.occupants || [] : [],
   available_for_date: avail ? avail.available : s.total_capacity,
   // legacy fields used across the UI now carry the real remaining quantity for the date
   available_qty: avail ? avail.available : s.available_qty,
@@ -52,7 +55,7 @@ exports.getAllServices = async (req, res, next) => {
     const services = rows
       .map((s) => formatService(s, { ...availability.byId.get(s.service_id), date }))
       .sort((a, b) => (b.is_featured - a.is_featured) || a.service_id - b.service_id);
-    res.status(200).json({ success: true, date, services, data: services });
+    res.status(200).json({ success: true, date, services, data: services, notCheckedOut: availability.notCheckedOut });
   } catch (err) {
     next(err);
   }

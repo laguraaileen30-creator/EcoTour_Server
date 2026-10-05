@@ -1,10 +1,10 @@
--- EcoTourVista database — generated 2026-09-23T11:21:38.367Z from the live database
+-- EcoTourVista database — generated 2026-10-05T15:20:04.394Z from the live database
 -- Do not edit by hand; run `npm run db:export` to regenerate.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
--- settings (12 rows)
+-- settings (6 rows)
 DELETE FROM `settings`;
 INSERT INTO `settings` (`id`, `setting_key`, `setting_value`, `description`, `updated_at`) VALUES
 (1, 'resort_name', 'Duangon Cold Spring', 'Official Resort Name', '2026-08-04 16:46:03'),
@@ -12,30 +12,22 @@ INSERT INTO `settings` (`id`, `setting_key`, `setting_value`, `description`, `up
 (3, 'max_daily_capacity', '300', 'Maximum daily visitor capacity', '2026-08-04 16:46:03'),
 (4, 'park_share_pct', '70', 'Resort/Park Revenue Share Percentage', '2026-08-04 16:46:03'),
 (5, 'barangay_share_pct', '20', 'Barangay Revenue Share Percentage', '2026-08-04 16:46:03'),
-(6, 'guide_share_pct', '10', 'Guide Association Share Percentage', '2026-08-04 16:46:03'),
-(37, 'low_stock_threshold_pct', '20', NULL, '2026-09-23 07:09:08'),
-(38, 'ticket_price_adult', '100', NULL, '2026-09-23 07:19:25'),
-(39, 'ticket_price_child', '40', NULL, '2026-09-23 07:19:25'),
-(40, 'ticket_price_student', '70', NULL, '2026-09-23 07:19:25'),
-(41, 'ticket_price_senior', '80', NULL, '2026-09-23 07:19:25'),
-(42, 'environmental_fee_per_head', '30', NULL, '2026-09-23 07:19:25');
+(6, 'guide_share_pct', '10', 'Guide Association Share Percentage', '2026-08-04 16:46:03');
 
--- services (13 rows)
+-- services (11 rows)
 DELETE FROM `services`;
-INSERT INTO `services` (`service_id`, `service_code`, `service_name`, `slug`, `category`, `short_description`, `description`, `price`, `unit`, `total_capacity`, `available_qty`, `image_url`, `status`, `created_at`, `updated_at`, `capacity_persons`, `minimum_quantity`, `manual_status`, `is_featured`, `show_on_landing`, `is_assignable`, `inclusions`, `exclusions`, `terms`, `gallery`, `deleted_at`) VALUES
-(1, 'DSVC-001', 'Cold Spring Pool Entrance Ticket', 'cold-spring-pool-entrance-ticket', 'Entrance', 'Day pass access to natural cold spring pool', 'Day pass access to natural cold spring pool', '100.00', 'head', 300, 300, '/src/assets/images/services/swimming.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL),
-(2, 'DSVC-002', 'Standard Open Cottage', 'standard-open-cottage', 'Cottage', 'Shaded native open cottage near pool', 'Shaded native open cottage near pool', '600.00', 'day', 10, 10, '/src/assets/images/services/cottage.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(3, 'DSVC-003', 'Resort Table & Chairs Set', 'resort-table-chairs-set', 'Rental', '1 Table + 4 monoblock chairs', '1 Table + 4 monoblock chairs', '250.00', 'day', 15, 15, '/src/assets/images/services/table.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL),
-(4, 'DSVC-004', 'Life Vest / Safety Gear', 'life-vest-safety-gear', 'Safety', 'Adult & Kid safety flotation vest', 'Adult & Kid safety flotation vest', '50.00', 'head', 30, 30, '/src/assets/images/services/lifevest.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL),
-(5, 'DSVC-005', 'Videoke Karaoke System', 'videoke-karaoke-system', 'Entertainment', 'Heavy-duty Videoke sound system', 'Heavy-duty Videoke sound system', '500.00', 'day', 4, 4, '/src/assets/images/services/videoke.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 10:39:53', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(6, 'DSVC-006', 'Kayak / Floating Pad Rental', 'kayak-floating-pad-rental', 'Water Activity', '1-hour kayak & water pad rental', '1-hour kayak & water pad rental', '300.00', 'hour', 5, 5, '/src/assets/images/services/floating.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(7, 'DSVC-007', 'Camping Pitch & Tent', 'camping-pitch-tent', 'Accommodation', 'Overnight camping slot & tent', 'Overnight camping slot & tent', '450.00', 'night', 8, 8, '/src/assets/images/services/tent.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(8, 'DSVC-008', 'Aircon Kubo Guest Room', 'aircon-kubo-guest-room', 'Accommodation', 'Private aircon room with bed & bath', 'Private aircon room with bed & bath', '1500.00', 'night', 4, 4, '/src/assets/images/services/room.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(9, 'DSVC-009', 'Private Event Pavilion', 'private-event-pavilion', 'Event', 'Private pavilion for family gatherings & events', 'Private pavilion for family gatherings & events', '3500.00', 'event', 2, 2, '/src/assets/images/services/event.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(10, 'DSVC-010', 'Buffet & Catering Station', 'buffet-catering-station', 'Food', 'Native buffet catering package', 'Native buffet catering package', '450.00', 'head', 50, 50, '/src/assets/images/services/buffet.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL),
-(11, 'DSVC-011', 'Secured Resort Parking Slot', 'secured-resort-parking-slot', 'Parking', 'Safe vehicle parking for cars & vans', 'Safe vehicle parking for cars & vans', '50.00', 'vehicle', 40, 40, '/src/assets/images/services/parking.png', 'Active', '2026-08-10 17:15:35', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(12, 'DSVC-002C', 'Executive Umbrella Shade', 'executive-umbrella-shade', 'Cottage', NULL, NULL, '400.00', 'day', 10, 10, '/src/assets/images/services/cottage.png', 'Active', '2026-09-16 07:22:50', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL),
-(13, 'DSVC-002B', 'Large Family Covered Cottage', 'large-family-covered-cottage', 'Cottage', NULL, NULL, '1000.00', 'day', 10, 10, '/src/assets/images/services/cottage.png', 'Active', '2026-09-16 07:22:50', '2026-09-23 07:09:08', NULL, 1, NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL);
+INSERT INTO `services` (`service_id`, `service_code`, `service_name`, `slug`, `category`, `description`, `short_description`, `price`, `unit`, `total_capacity`, `capacity_persons`, `minimum_quantity`, `available_qty`, `image_url`, `status`, `manual_status`, `is_featured`, `show_on_landing`, `is_assignable`, `inclusions`, `exclusions`, `terms`, `gallery`, `deleted_at`, `created_at`, `updated_at`) VALUES
+(1, 'DSVC-001', 'Cold Spring Pool Entrance Ticket', 'cold-spring-pool-entrance-ticket', 'Entrance', 'Day pass access to natural cold spring pool', NULL, '100.00', 'head', 300, NULL, 1, 300, '/src/assets/images/services/swimming.png', 'Active', NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(2, 'DSVC-002', 'Standard Open Cottage', 'standard-open-cottage', 'Cottage', 'Shaded native open cottage near pool', NULL, '600.00', 'day', 10, NULL, 1, 10, '/src/assets/images/services/cottage.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(3, 'DSVC-003', 'Resort Table & Chairs Set', 'resort-table-chairs-set', 'Rental', '1 Table + 4 monoblock chairs', NULL, '250.00', 'day', 15, NULL, 1, 15, '/src/assets/images/services/table.png', 'Active', NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(4, 'DSVC-004', 'Life Vest / Safety Gear', 'life-vest-safety-gear', 'Safety', 'Adult & Kid safety flotation vest', NULL, '50.00', 'head', 30, NULL, 1, 30, '/src/assets/images/services/lifevest.png', 'Active', NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(5, 'DSVC-005', 'Videoke Karaoke System', 'videoke-karaoke-system', 'Entertainment', 'Heavy-duty Videoke sound system', NULL, '500.00', 'day', 4, NULL, 1, 4, '/src/assets/images/services/videoke.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-10-05 12:59:43'),
+(6, 'DSVC-006', 'Kayak / Floating Pad Rental', 'kayak-floating-pad-rental', 'Water Activity', '1-hour kayak & water pad rental', NULL, '300.00', 'hour', 5, NULL, 1, 5, '/src/assets/images/services/floating.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(7, 'DSVC-007', 'Camping Pitch & Tent', 'camping-pitch-tent', 'Accommodation', 'Overnight camping slot & tent', NULL, '450.00', 'night', 8, NULL, 1, 8, '/src/assets/images/services/tent.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(8, 'DSVC-008', 'Aircon Kubo Guest Room', 'aircon-kubo-guest-room', 'Accommodation', 'Private aircon room with bed & bath', NULL, '1500.00', 'night', 4, NULL, 1, 4, '/src/assets/images/services/room.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(9, 'DSVC-009', 'Private Event Pavilion', 'private-event-pavilion', 'Event', 'Private pavilion for family gatherings & events', NULL, '3500.00', 'event', 2, NULL, 1, 2, '/src/assets/images/services/event.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(10, 'DSVC-010', 'Buffet & Catering Station', 'buffet-catering-station', 'Food', 'Native buffet catering package', NULL, '450.00', 'head', 50, NULL, 1, 50, '/src/assets/images/services/buffet.png', 'Active', NULL, 0, 1, 0, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58'),
+(11, 'DSVC-011', 'Secured Resort Parking Slot', 'secured-resort-parking-slot', 'Parking', 'Safe vehicle parking for cars & vans', NULL, '50.00', 'vehicle', 40, NULL, 1, 40, '/src/assets/images/services/parking.png', 'Active', NULL, 0, 1, 1, NULL, NULL, NULL, NULL, NULL, '2026-08-04 18:03:40', '2026-09-29 14:10:58');
 
 -- service_resources (93 rows)
 DELETE FROM `service_resources`;
@@ -222,13 +214,7 @@ DELETE FROM `promotion_packages`;
 -- promotion_services (0 rows)
 DELETE FROM `promotion_services`;
 
--- tourist_spots (5 rows)
+-- tourist_spots (0 rows)
 DELETE FROM `tourist_spots`;
-INSERT INTO `tourist_spots` (`spot_id`, `spot_name`, `description`, `location`, `entrance_local`, `entrance_foreign`, `image`, `status`) VALUES
-(1, 'Rajah Sikatuna Protected Landscape', 'Bohols largest protected forest sanctuary, home to rare birds, lush trails, and natural springs.', 'Riverside, Bilar', '100.00', '150.00', '/src/assets/images/services/Rajah.png', 'active'),
-(2, 'Kinaiyahan Forest Park', 'A peaceful forest park featuring camping grounds, scenic walking paths, and mountain air.', 'Zamora, Bilar', '50.00', '100.00', '/src/assets/images/services/Kinaiyahan.jpg', 'active'),
-(3, 'Tinugdan Spring', 'A serene natural spring with cool, flowing mountain water surrounded by lush foliage.', 'Campagao, Bilar', '30.00', '50.00', '/src/assets/images/services/Tinugdan.png', 'active'),
-(4, 'Pangas Falls', 'A cascading waterfall with a wide natural pool, ideal for swimming and picnics.', 'Dagohoy, Bilar', '40.00', '80.00', '/src/assets/images/services/Pangas.png', 'active'),
-(5, 'Camelo View Deck', 'A viewpoint offering panoramic views of Bilars lush valleys.', 'Zamora, Bilar', '20.00', '50.00', '/src/assets/images/services/Camelo.png', 'active');
 
 SET FOREIGN_KEY_CHECKS = 1;

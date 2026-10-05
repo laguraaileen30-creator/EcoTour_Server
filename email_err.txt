@@ -1,0 +1,3 @@
+Error: Unknown column 'confirmation_status' in 'field list'
+    at exports.requestConfirmation (C:\Users\Public\EcoTour_Server\src\controllers\reservationLifecycleController.js:100:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)

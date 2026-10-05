@@ -87,7 +87,9 @@ exports.availabilityCalendar = async (req, res) => {
 
 // Units of a service (or all) with their state on a date
 const loadUnits = async (date, serviceId = null, conn = db) => {
-  const params = [date, date, date];
+  // Today, a unit whose guest from an earlier day is still 'In Use' (not checked out) is occupied
+  const carry = date === A.todayPH() ? 1 : 0;
+  const params = [date, date, date, carry, date];
   let where = 'WHERE s.deleted_at IS NULL';
   if (serviceId) { where += ' AND r.service_id = ?'; params.push(serviceId); }
   const [rows] = await conn.query(
@@ -99,13 +101,16 @@ const loadUnits = async (date, serviceId = null, conn = db) => {
      FROM service_resources r
      JOIN services s ON s.service_id = r.service_id
      LEFT JOIN resource_assignments ra ON ra.service_resource_id = r.id
-          AND ra.status IN ('Held','Reserved','In Use') AND DATE(ra.start_time) = ?
+          AND ra.status IN ('Held','Reserved','In Use')
+          AND (DATE(ra.start_time) = ? OR (? = 1 AND ra.status = 'In Use' AND DATE(ra.start_time) < ?))
      LEFT JOIN bookings b ON b.id = ra.booking_id
      ${where}
-     ORDER BY s.service_name, r.resource_name`,
+     ORDER BY s.service_name, r.resource_name, (ra.status = 'In Use') DESC`,
     params
   );
-  return rows.map((r) => {
+  // one row per unit (an 'In Use' carry-over wins over a later reservation of the same unit)
+  const seen = new Set();
+  return rows.filter((r) => (seen.has(r.id) ? false : seen.add(r.id))).map((r) => {
     let state = 'AVAILABLE';
     if (r.unit_status !== 'Available' || r.block_reason) state = 'MAINTENANCE';
     else if (r.assignment_id) state = r.assignment_status === 'In Use' ? 'OCCUPIED' : 'RESERVED';
@@ -261,8 +266,9 @@ exports.assignResource = async (req, res) => {
     }
     const [taken] = await conn.query(
       `SELECT ra.booking_id, b.booking_number FROM resource_assignments ra JOIN bookings b ON b.id = ra.booking_id
-       WHERE ra.service_resource_id = ? AND ra.status IN ('Held','Reserved','In Use') AND DATE(ra.start_time) = ?`,
-      [unit.id, date]
+       WHERE ra.service_resource_id = ? AND ra.status IN ('Held','Reserved','In Use')
+         AND (DATE(ra.start_time) = ? OR (? = 1 AND ra.status = 'In Use' AND DATE(ra.start_time) < ?))`,
+      [unit.id, date, date === A.todayPH() ? 1 : 0, date]
     );
     if (taken.length) {
       await conn.rollback();

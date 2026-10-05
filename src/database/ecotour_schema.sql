@@ -1,4 +1,4 @@
--- EcoTourVista database — generated 2026-09-23T11:21:38.367Z from the live database
+-- EcoTourVista database — generated 2026-10-05T15:20:04.394Z from the live database
 -- Do not edit by hand; run `npm run db:export` to regenerate.
 
 SET NAMES utf8mb4;
@@ -37,7 +37,7 @@ CREATE TABLE `booking_items` (
   `unit_price` decimal(10,2) NOT NULL,
   `quantity` int DEFAULT '1',
   `subtotal` decimal(10,2) NOT NULL,
-  `item_type` varchar(20) DEFAULT NULL COMMENT 'PACKAGE | TICKET | FEE | ADDON',
+  `item_type` varchar(20) DEFAULT NULL COMMENT 'PACKAGE | TICKET | FEE | ADDON | DAMAGE_FEE',
   PRIMARY KEY (`id`),
   KEY `booking_id` (`booking_id`),
   CONSTRAINT `booking_items_ibfk_1` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE CASCADE
@@ -49,33 +49,38 @@ CREATE TABLE `bookings` (
   `booking_number` varchar(30) NOT NULL,
   `user_id` int DEFAULT NULL,
   `package_id` int DEFAULT NULL,
-  `promotion_id` int DEFAULT NULL,
-  `voucher_id` int DEFAULT NULL,
-  `applied_promo_name` varchar(100) DEFAULT NULL,
   `client_name` varchar(100) NOT NULL,
   `client_email` varchar(100) DEFAULT NULL,
   `client_phone` varchar(20) DEFAULT NULL,
   `booking_date` date NOT NULL,
   `arrival_time` varchar(20) DEFAULT NULL,
   `pax` int DEFAULT '1',
-  `original_value` decimal(10,2) DEFAULT '0.00',
-  `base_package_price` decimal(10,2) DEFAULT '0.00',
   `total_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
-  `discount_amount` decimal(10,2) DEFAULT '0.00',
-  `voucher_discount_amount` decimal(10,2) DEFAULT '0.00',
+  `discount_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `promo_code` varchar(30) DEFAULT NULL,
   `payment_method` varchar(30) DEFAULT 'Cash',
-  `status` varchar(50) NOT NULL DEFAULT 'Pending',
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `payment_status` varchar(30) NOT NULL DEFAULT 'Unpaid',
+  `status` enum('Pending','Confirmed','Checked In','Completed','Cancelled','Rejected') DEFAULT 'Pending',
+  `notes` text,
+  `checked_in_at` datetime DEFAULT NULL,
+  `checked_out_at` datetime DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `booking_type` varchar(40) DEFAULT NULL COMMENT 'PACKAGE_ONLY | PACKAGE_WITH_TICKETS | PACKAGE_WITH_ADDONS | PACKAGE_WITH_TICKETS_AND_ADDONS | TICKETS_ONLY | TICKETS_WITH_ADDONS | ADDONS_ONLY',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `promotion_id` int DEFAULT NULL,
+  `applied_promo_name` varchar(255) DEFAULT NULL,
+  `original_value` decimal(10,2) DEFAULT NULL,
+  `base_package_price` decimal(10,2) DEFAULT NULL,
+  `booking_type` varchar(50) DEFAULT NULL,
+  `reservation_fee` decimal(10,2) DEFAULT NULL,
+  `fee_status` varchar(50) DEFAULT NULL,
+  `amount_paid` decimal(10,2) DEFAULT NULL,
+  `confirmation_status` varchar(50) DEFAULT NULL,
+  `confirmation_sent_at` datetime DEFAULT NULL,
+  `confirmation_deadline` datetime DEFAULT NULL,
+  `confirmation_token` varchar(255) DEFAULT NULL,
+  `confirmation_responded_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `booking_number` (`booking_number`),
-  KEY `fk_booking_package` (`package_id`),
-  KEY `fk_booking_promotion` (`promotion_id`),
-  KEY `fk_booking_voucher` (`voucher_id`),
-  CONSTRAINT `fk_booking_package` FOREIGN KEY (`package_id`) REFERENCES `packages` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_booking_promotion` FOREIGN KEY (`promotion_id`) REFERENCES `promotions` (`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_booking_voucher` FOREIGN KEY (`voucher_id`) REFERENCES `vouchers` (`id`) ON DELETE SET NULL
+  UNIQUE KEY `booking_number` (`booking_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `capacity_limits`;
@@ -108,6 +113,50 @@ CREATE TABLE `daily_cash_history` (
   UNIQUE KEY `date` (`date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+DROP TABLE IF EXISTS `damage_reports`;
+CREATE TABLE `damage_reports` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `booking_id` int NOT NULL,
+  `inspection_id` int NOT NULL,
+  `item_name` varchar(100) NOT NULL,
+  `damage_type` varchar(100) NOT NULL,
+  `description` text NOT NULL,
+  `evidence_url` varchar(255) DEFAULT NULL,
+  `repair_cost` decimal(10,2) DEFAULT '0.00',
+  `labor_cost` decimal(10,2) DEFAULT '0.00',
+  `recommended_fee` decimal(10,2) DEFAULT '0.00',
+  `final_fee` decimal(10,2) DEFAULT '0.00',
+  `status` enum('Pending','Approved','Rejected','Waived') DEFAULT 'Pending',
+  `reported_by` int NOT NULL,
+  `approved_by` int DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `booking_id` (`booking_id`),
+  KEY `inspection_id` (`inspection_id`),
+  KEY `reported_by` (`reported_by`),
+  KEY `approved_by` (`approved_by`),
+  CONSTRAINT `damage_reports_ibfk_1` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `damage_reports_ibfk_2` FOREIGN KEY (`inspection_id`) REFERENCES `facility_inspections` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `damage_reports_ibfk_3` FOREIGN KEY (`reported_by`) REFERENCES `users` (`user_id`) ON DELETE RESTRICT,
+  CONSTRAINT `damage_reports_ibfk_4` FOREIGN KEY (`approved_by`) REFERENCES `users` (`user_id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `facility_inspections`;
+CREATE TABLE `facility_inspections` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `booking_id` int NOT NULL,
+  `type` enum('Pre-Checkin','Checkout') NOT NULL,
+  `status` enum('Clear','Damage Found') DEFAULT 'Clear',
+  `inspected_by` int NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `booking_id` (`booking_id`),
+  KEY `inspected_by` (`inspected_by`),
+  CONSTRAINT `facility_inspections_ibfk_1` FOREIGN KEY (`booking_id`) REFERENCES `bookings` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `facility_inspections_ibfk_2` FOREIGN KEY (`inspected_by`) REFERENCES `users` (`user_id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 DROP TABLE IF EXISTS `gallery`;
 CREATE TABLE `gallery` (
   `image_id` int NOT NULL AUTO_INCREMENT,
@@ -116,6 +165,18 @@ CREATE TABLE `gallery` (
   `category` varchar(50) DEFAULT NULL,
   `uploaded_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`image_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `inspection_items`;
+CREATE TABLE `inspection_items` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `inspection_id` int NOT NULL,
+  `item_name` varchar(100) NOT NULL,
+  `condition` varchar(100) NOT NULL,
+  `notes` text,
+  PRIMARY KEY (`id`),
+  KEY `inspection_id` (`inspection_id`),
+  CONSTRAINT `inspection_items_ibfk_1` FOREIGN KEY (`inspection_id`) REFERENCES `facility_inspections` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `notifications`;
@@ -273,6 +334,7 @@ CREATE TABLE `reservations` (
   `payment_status` enum('pending','paid','cancelled') DEFAULT 'pending',
   `reservation_status` enum('pending','approved','completed','cancelled') DEFAULT 'pending',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `promotion_id` int DEFAULT NULL,
   PRIMARY KEY (`reservation_id`),
   KEY `user_id` (`user_id`),
   CONSTRAINT `reservations_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
@@ -367,29 +429,29 @@ CREATE TABLE `services` (
   `service_id` int NOT NULL AUTO_INCREMENT,
   `service_code` varchar(20) NOT NULL,
   `service_name` varchar(100) NOT NULL,
-  `slug` varchar(120) DEFAULT NULL,
+  `slug` varchar(150) DEFAULT NULL,
   `category` varchar(50) NOT NULL,
-  `short_description` varchar(255) DEFAULT NULL,
   `description` text,
+  `short_description` varchar(255) DEFAULT NULL,
   `price` decimal(10,2) NOT NULL DEFAULT '0.00',
   `unit` varchar(30) DEFAULT 'unit',
   `total_capacity` int DEFAULT '10',
+  `capacity_persons` int DEFAULT NULL,
+  `minimum_quantity` int NOT NULL DEFAULT '1',
   `available_qty` int DEFAULT '10',
   `image_url` varchar(255) DEFAULT NULL,
   `status` enum('Active','Inactive') DEFAULT 'Active',
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `capacity_persons` int DEFAULT NULL,
-  `minimum_quantity` int NOT NULL DEFAULT '1',
-  `manual_status` varchar(20) DEFAULT NULL COMMENT 'OUT_OF_STOCK | UNAVAILABLE | MAINTENANCE; NULL = automatic',
+  `manual_status` varchar(20) DEFAULT NULL,
   `is_featured` tinyint(1) NOT NULL DEFAULT '0',
   `show_on_landing` tinyint(1) NOT NULL DEFAULT '1',
-  `is_assignable` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = numbered physical units (service_resources)',
+  `is_assignable` tinyint(1) NOT NULL DEFAULT '0',
   `inclusions` text,
   `exclusions` text,
   `terms` text,
   `gallery` text,
   `deleted_at` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`service_id`),
   UNIQUE KEY `service_code` (`service_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -422,7 +484,6 @@ DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
   `user_id` int NOT NULL AUTO_INCREMENT,
   `user_number` varchar(30) DEFAULT NULL,
-  `client_no` varchar(30) DEFAULT NULL,
   `fname` varchar(50) NOT NULL,
   `mname` varchar(50) DEFAULT NULL,
   `lname` varchar(50) NOT NULL,
@@ -431,17 +492,15 @@ CREATE TABLE `users` (
   `address` varchar(255) NOT NULL,
   `contact_no` varchar(20) NOT NULL,
   `email` varchar(100) NOT NULL,
-  `username` varchar(100) DEFAULT NULL,
+  `username` varchar(50) NOT NULL,
   `password` varchar(255) NOT NULL,
+  `hashed_password` varchar(255) DEFAULT NULL,
   `role` enum('admin','staff','client') DEFAULT 'client',
   `status` enum('Pending','Approved','Rejected','Suspended') NOT NULL DEFAULT 'Pending',
-  `account_status` enum('Active','Inactive') NOT NULL DEFAULT 'Inactive',
-  `created_by` varchar(100) DEFAULT 'Self-Registered',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `approved_by` varchar(100) DEFAULT NULL,
   `approved_at` datetime DEFAULT NULL,
-  `rejection_reason` text,
   PRIMARY KEY (`user_id`),
   UNIQUE KEY `email` (`email`),
   UNIQUE KEY `username` (`username`),

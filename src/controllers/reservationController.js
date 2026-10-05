@@ -163,7 +163,7 @@ exports.getReservationById = async (req, res) => {
     }
 
     const b = bookingResult[0];
-    const [[ownerRow]] = await db.query('SELECT user_id, client_email FROM bookings WHERE id = ?', [b.id]);
+    const [[ownerRow]] = await db.query('SELECT user_id, client_email, total_amount, amount_paid, fee_status, reservation_fee FROM bookings WHERE id = ?', [b.id]);
     if (!ownsBooking(await getScope(req), ownerRow)) {
       return res.status(404).json({ success: false, message: 'Reservation not found' });
     }
@@ -182,6 +182,10 @@ exports.getReservationById = async (req, res) => {
       arrivalTime: b.arrival_time,
       totalVisitors: b.pax,
       totalPrice: parseFloat(b.total_amount || 0),
+      amountPaid: parseFloat(ownerRow.amount_paid || 0),
+      balanceDue: Math.max(0, parseFloat(ownerRow.total_amount || 0) - parseFloat(ownerRow.amount_paid || 0)),
+      feeStatus: ownerRow.fee_status,
+      reservationFee: parseFloat(ownerRow.reservation_fee || 0),
       paymentMethod: b.payment_method,
       status: b.status,
       items: items.map(i => ({
@@ -352,6 +356,7 @@ exports.createReservation = async (req, res) => {
   } catch (error) {
     await conn.rollback().catch(() => {});
     console.error('Error creating reservation:', error);
+    require('fs').writeFileSync('res_err.txt', error.stack || error.message);
     res.status(500).json({ success: false, message: 'Failed to create reservation in database', error: error.message });
   } finally {
     conn.release();

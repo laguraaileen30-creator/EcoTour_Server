@@ -25,6 +25,8 @@ const availabilityRoutes = require('./src/routes/availabilityRoutes');
 const packageRoutes = require('./src/routes/packageRoutes');
 const { dealRouter, promotionRouter } = require('./src/routes/dealRoutes');
 const { uploadRouter, UPLOAD_DIR } = require('./src/routes/uploadRoutes');
+const inspectionRoutes = require('./src/routes/inspectionRoutes');
+const damageRoutes = require('./src/routes/damageRoutes');
 const notFoundMiddleware = require('./src/middleware/notFoundMiddleware');
 const errorMiddleware = require('./src/middleware/errorMiddleware');
 const attachUser = require('./src/middleware/attachUser');
@@ -88,6 +90,8 @@ const createApp = () => {
   app.use('/api/v1/deals', dealRouter);
   app.use('/api/v1/promotions', promotionRouter);
   app.use('/api/v1/uploads', uploadRouter);
+  app.use('/api/v1/inspections', inspectionRoutes);
+  app.use('/api/v1/damages', damageRoutes);
   app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 
   app.use(notFoundMiddleware);

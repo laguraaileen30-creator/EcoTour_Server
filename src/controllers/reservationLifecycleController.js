@@ -104,7 +104,7 @@ exports.requestConfirmation = async (req, res) => {
     );
 
     const link = (action) => `${API_URL}/api/v1/reservations/confirm/${token}?action=${action}`;
-    const subject = `Action needed within ${windowHours} hours: continue or cancel reservation ${b.booking_number}`;
+    const subject = `⏰ Action needed within ${windowHours} hours: continue or cancel reservation ${b.booking_number}`;
     const html = emailFrame('Please confirm your reservation', `
       <p>Hi <b>${to.name}</b>,</p>
       <p>Thank you for booking with Duangon Cold Spring. Please tell us whether you will <b>continue</b> with this reservation.
@@ -130,19 +130,21 @@ exports.requestConfirmation = async (req, res) => {
       `To CANCEL (void), open: ${link('cancel')}\n\n` +
       `You can also answer from My Reservations in your EcoTourVista account: ${APP_URL}/login\n\n` +
       `— Duangon Cold Spring Resort, Bilar, Bohol`;
-    // Labelled rows for the FormSubmit table email
+    // FormSubmit email: deadline first, then the booking, the money, and the two answer links
+    const intro = `Thank you for booking with Duangon Cold Spring Resort! Please tell us within ${windowHours} hours whether you will continue with your reservation. If we don't hear from you in time, it is voided automatically and the cottages are released to other guests.`;
     const fields = {
-      'Booking reference': b.booking_number,
-      'Visit date': `${visit} ${b.arrival_time || ''}`.trim(),
-      Guests: `${b.pax} pax`,
-      'Booking total': peso(b.total_amount),
-      'Reservation fee (cash at counter)': peso(b.reservation_fee),
-      'Balance due on arrival': peso(balance),
-      'Answer before': `${phDateTime(deadline)} (PHT)`,
-      '✓ CONTINUE my reservation': link('continue'),
-      '✕ CANCEL (void) my reservation': link('cancel'),
+      '⏰ Please answer before': `${phDateTime(deadline)} (Philippine time)`,
+      '🎫 Booking reference': b.booking_number,
+      '📅 Visit date': `${visit} ${b.arrival_time || ''}`.trim(),
+      '👥 Guests': `${b.pax} pax`,
+      '💰 Booking total': peso(b.total_amount),
+      '💵 Reservation fee — pay in cash at the counter': peso(b.reservation_fee),
+      '🧾 Balance due on arrival': peso(balance),
+      '✅ YES, CONTINUE my reservation — open this link': link('continue'),
+      '❌ NO, CANCEL (void) my reservation — open this link': link('cancel'),
+      '💻 Or answer online': `${APP_URL}/login  (My Reservations)`,
     };
-    const mail = await sendEmail({ to: to.email, name: to.name, subject, text, html, fields });
+    const mail = await sendEmail({ to: to.email, name: to.name, subject, text, html, intro, fields });
 
     await db.query('INSERT INTO audit_logs (action, description) VALUES (?, ?)', [
       'RESERVATION_CONFIRMATION_REQUESTED',
@@ -162,6 +164,7 @@ exports.requestConfirmation = async (req, res) => {
     });
   } catch (error) {
     console.error('Request confirmation error:', error);
+    require('fs').writeFileSync('email_err.txt', error.stack);
     res.status(500).json({ success: false, message: 'Could not send the confirmation email', error: error.message });
   }
 };
@@ -307,7 +310,13 @@ const expireBooking = async (b) => {
     sendEmail({
       to: to.email,
       name: to.name,
-      subject: `Reservation ${b.booking_number} was voided (no response within the confirmation window)`,
+      subject: `⛔ Reservation ${b.booking_number} was voided (no response within the confirmation window)`,
+      intro: 'We did not receive your answer within the confirmation window, so your reservation was automatically voided and the cottages were released to other guests. You are welcome to book again anytime.',
+      fields: {
+        '🎫 Booking reference': b.booking_number,
+        '⛔ Status': 'VOIDED — no reply before the deadline',
+        '🔗 Book again': `${APP_URL}/login`,
+      },
       text: `Hi ${to.name},\n\nWe did not receive your answer in time, so reservation ${b.booking_number} was automatically voided and the facilities were released. You are welcome to book again anytime.\n`,
       html: emailFrame('Your reservation was voided', `<p>Hi <b>${to.name}</b>,</p><p>We did not receive your answer within the confirmation window, so reservation <b style="font-family:monospace">${b.booking_number}</b> was <b>automatically voided</b> and the cottages were released to other guests.</p><p>You are welcome to <a href="${APP_URL}/login">book again</a> anytime.</p>`),
     }).catch(() => {});

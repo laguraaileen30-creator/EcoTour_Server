@@ -1,4 +1,4 @@
--- EcoTourVista database — generated 2026-09-23T11:21:38.367Z from the live database
+-- EcoTourVista database — generated 2026-10-05T15:20:04.394Z from the live database
 -- Do not edit by hand; run `npm run db:export` to regenerate.
 
 SET NAMES utf8mb4;
@@ -529,10 +529,10 @@ CREATE PROCEDURE `sp_register_user`(
 BEGIN
   INSERT INTO users
     (user_number, fname, mname, lname, contact_no, address, gender,
-     role, email, password, status)
+     role, email, password, status, username)
   VALUES
     (p_user_number, p_fname, p_mname, p_lname, p_contact_no, p_address,
-     p_gender, p_role, p_email, p_password_hash, p_status);
+     p_gender, p_role, p_email, p_password_hash, p_status, p_email);
 
   SELECT LAST_INSERT_ID() AS new_user_id;
 END$$

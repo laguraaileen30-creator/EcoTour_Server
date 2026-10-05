@@ -6,6 +6,9 @@
 // demand(service, date):
 //   sum of quantities from every ACTIVE booking on that date (pending, confirmed, paid, checked in, using, walk-ins),
 //   including package bookings expanded through package_items.
+//   For TODAY it also includes guests from earlier dates who are still checked in / using services (not checked
+//   out yet) — their cottages and rentals are physically occupied until staff check them out.
+// inUse(service, date): the part of demand from guests currently checked in / using services.
 // status: manual admin status wins (OUT_OF_STOCK / UNAVAILABLE / MAINTENANCE / INACTIVE), otherwise
 //   OUT_OF_STOCK (no stock at all) -> FULLY_BOOKED (0 left for the date) -> LOW_STOCK (<= threshold) -> AVAILABLE.
 const db = require('../config/database');
@@ -18,6 +21,10 @@ const isActiveBookingStatus = (status) => {
   const s = String(status || '').toLowerCase();
   return !INACTIVE_BOOKING_PATTERNS.some((p) => s.includes(p));
 };
+
+// Guest is on site and has not been checked out yet
+const IN_USE_SQL_PATTERN = 'using|checked in|check-in|in service|in resort';
+const isInUseStatus = (status) => new RegExp(IN_USE_SQL_PATTERN, 'i').test(String(status || '')) && isActiveBookingStatus(status);
 
 const toDateStr = (d) => {
   if (!d) return null;
@@ -113,14 +120,26 @@ const demandFromRequest = (catalog, { items = [], packageId = null, extra = [] }
   return Array.from(totals.entries()).map(([serviceId, quantity]) => ({ serviceId, quantity }));
 };
 
-// Reserved quantities per service for a date, from every active booking
+// Reserved and in-use quantities per service for a date, from every active booking
+// (plus, for today, guests from earlier dates who have not checked out yet)
 const reservedForDate = async (catalog, date, { conn = db, excludeBookingId = null } = {}) => {
+  const carryOver = date === todayPH();
   const [bookings] = await conn.query(
-    'SELECT id, package_id, status FROM bookings WHERE booking_date = ?',
-    [date]
+    `SELECT id, booking_number, client_name, package_id, status, booking_date, (booking_date < ?) AS carried_over
+     FROM bookings
+     WHERE booking_date = ?${carryOver ? ' OR (booking_date < ? AND status REGEXP ?)' : ''}`,
+    carryOver ? [date, date, date, IN_USE_SQL_PATTERN] : [date, date]
   );
-  const active = bookings.filter((b) => isActiveBookingStatus(b.status) && String(b.id) !== String(excludeBookingId));
+  const active = bookings.filter((b) =>
+    isActiveBookingStatus(b.status) &&
+    (!Number(b.carried_over) || isInUseStatus(b.status)) &&
+    String(b.id) !== String(excludeBookingId)
+  );
   const reserved = new Map();
+  const inUse = new Map();
+  const occupants = new Map(); // serviceId -> [{ bookingRef, clientName, quantity, status, bookingDate, carriedOver }]
+  reserved.inUse = inUse;
+  reserved.occupants = occupants;
   if (active.length === 0) return reserved;
   const [items] = await conn.query(
     `SELECT booking_id, service_id, service_name, quantity FROM booking_items WHERE booking_id IN (${active.map(() => '?').join(',')})`,
@@ -132,8 +151,20 @@ const reservedForDate = async (catalog, date, { conn = db, excludeBookingId = nu
     itemsByBooking.get(i.booking_id).push({ name: i.service_name, quantity: i.quantity });
   });
   active.forEach((b) => {
+    const using = isInUseStatus(b.status);
     demandFromRequest(catalog, { items: itemsByBooking.get(b.id) || [], packageId: b.package_id }).forEach((d) => {
       reserved.set(d.serviceId, (reserved.get(d.serviceId) || 0) + d.quantity);
+      if (!using) return;
+      inUse.set(d.serviceId, (inUse.get(d.serviceId) || 0) + d.quantity);
+      if (!occupants.has(d.serviceId)) occupants.set(d.serviceId, []);
+      occupants.get(d.serviceId).push({
+        bookingRef: b.booking_number,
+        clientName: b.client_name,
+        quantity: d.quantity,
+        status: b.status,
+        bookingDate: toDateStr(b.booking_date),
+        carriedOver: !!Number(b.carried_over),
+      });
     });
   });
   return reserved;
@@ -185,6 +216,7 @@ const getServicesAvailability = async (date, { conn = db, excludeBookingId = nul
   catalog.services.forEach((s) => {
     const total = capacityFor(catalog, s, units);
     const booked = reserved.get(s.service_id) || 0;
+    const using = reserved.inUse.get(s.service_id) || 0;
     byId.set(s.service_id, {
       serviceId: s.service_id,
       serviceCode: s.service_code,
@@ -193,12 +225,18 @@ const getServicesAvailability = async (date, { conn = db, excludeBookingId = nul
       isAssignable: !!s.is_assignable,
       total,
       reserved: booked,
+      inUse: using, // guests on site now (checked in / using services), part of reserved
+      upcoming: Math.max(0, booked - using), // booked but not arrived yet
+      occupants: reserved.occupants.get(s.service_id) || [],
       available: Math.max(0, total - booked),
       status: computeStatus(s, total, booked, catalog.lowStockPct),
       manualStatus: s.manual_status || null,
     });
   });
-  return { catalog, byId, date };
+  // Guests from earlier dates still checked in (staff should check them out when they leave)
+  const notCheckedOut = new Map();
+  reserved.occupants.forEach((list) => list.forEach((o) => { if (o.carriedOver) notCheckedOut.set(o.bookingRef, o); }));
+  return { catalog, byId, date, notCheckedOut: Array.from(notCheckedOut.values()) };
 };
 
 // Check a set of requested quantities; returns items + unavailable list
@@ -247,6 +285,8 @@ module.exports = {
   BLOCKING_STATUSES,
   MANUAL_STATUSES,
   isActiveBookingStatus,
+  isInUseStatus,
+  IN_USE_SQL_PATTERN,
   toDateStr,
   todayPH,
   loadCatalog,
