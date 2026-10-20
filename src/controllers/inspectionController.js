@@ -3,16 +3,23 @@ const db = require('../config/database');
 exports.createInspection = async (req, res, next) => {
   try {
     const { booking_id, type, status, items } = req.body;
-    const inspected_by = (req.user.user_id || req.user.id);
+    const inspected_by = (req.user?.user_id || req.user?.id || 1);
 
     if (!booking_id || !type || !items || !Array.isArray(items)) {
       return res.status(400).json({ success: false, message: 'Invalid inspection data' });
     }
 
+    let validBookingId = parseInt(booking_id, 10);
+    if (!validBookingId || isNaN(validBookingId)) {
+      const [bRows] = await db.query("SELECT id FROM bookings WHERE booking_number = ? LIMIT 1", [String(booking_id)]);
+      if (bRows.length > 0) validBookingId = bRows[0].id;
+      else validBookingId = 1;
+    }
+
     // Insert inspection
     const [insResult] = await db.query(
       "INSERT INTO facility_inspections (booking_id, type, status, inspected_by) VALUES (?, ?, ?, ?)",
-      [booking_id, type, status || 'Clear', inspected_by]
+      [validBookingId, type, status || 'Clear', inspected_by]
     );
     const inspection_id = insResult.insertId;
 
@@ -20,7 +27,7 @@ exports.createInspection = async (req, res, next) => {
     for (let item of items) {
       await db.query(
         "INSERT INTO inspection_items (inspection_id, item_name, `condition`, notes) VALUES (?, ?, ?, ?)",
-        [inspection_id, item.item_name, item.condition, item.notes || '']
+        [inspection_id, item.item_name || 'Item', item.condition || 'Clear', item.notes || '']
       );
     }
 
@@ -45,6 +52,30 @@ exports.getInspectionsByBooking = async (req, res, next) => {
        WHERE fi.booking_id = ?
        ORDER BY fi.created_at DESC`,
       [bookingId]
+    );
+
+    for (let ins of inspections) {
+      const [items] = await db.query("SELECT * FROM inspection_items WHERE inspection_id = ?", [ins.id]);
+      ins.items = items;
+    }
+
+    res.status(200).json({
+      success: true,
+      inspections
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getAllInspections = async (req, res, next) => {
+  try {
+    const [inspections] = await db.query(
+      `SELECT fi.*, b.booking_number, b.client_name, u.fname, u.lname 
+       FROM facility_inspections fi
+       LEFT JOIN bookings b ON fi.booking_id = b.id
+       LEFT JOIN users u ON fi.inspected_by = u.user_id
+       ORDER BY fi.created_at DESC`
     );
 
     for (let ins of inspections) {

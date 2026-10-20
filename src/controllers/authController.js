@@ -85,11 +85,17 @@ exports.login = async (req, res, next) => {
       }
     }
 
+    const fullName = `${user.fname || ''} ${user.lname || ''}`.trim() || user.username || 'Staff';
+
     const token = jwt.sign(
       {
         id: user.user_id,
+        user_id: user.user_id,
         role: user.role,
         user_number: user.user_number,
+        fname: user.fname,
+        lname: user.lname,
+        name: fullName,
       },
       process.env.JWT_SECRET || "secret",
       {
@@ -106,6 +112,7 @@ exports.login = async (req, res, next) => {
         fname: user.fname,
         mname: user.mname,
         lname: user.lname,
+        name: fullName,
         email: user.email,
         contact_no: user.contact_no,
         address: user.address,
@@ -145,6 +152,14 @@ exports.register = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: "Please fill in all required personal profiling fields.",
+      });
+    }
+
+    const cleanedContact = String(contact_no || '').replace(/\D/g, '');
+    if (!/^\d{11}$/.test(cleanedContact)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number must be exactly 11 digits (numbers only, e.g. 09123456789).",
       });
     }
 
@@ -189,7 +204,7 @@ exports.register = async (req, res, next) => {
         fname,
         mname || "",
         lname,
-        contact_no,
+        cleanedContact,
         address,
         gender,
         role,

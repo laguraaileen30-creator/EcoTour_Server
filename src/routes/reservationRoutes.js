@@ -8,6 +8,8 @@ const {
   addServicesToReservation,
   quoteReservation,
   getPricing,
+  caterReservation,
+  uncaterReservation,
 } = require('../controllers/reservationController');
 const { requestConfirmation, respondByToken, clientDecision, recordPayment } = require('../controllers/reservationLifecycleController');
 
@@ -29,5 +31,7 @@ router.post('/:id/addons', requireRole('admin', 'staff'), addServicesToReservati
 router.post('/:id/request-confirmation', requireRole('admin', 'staff'), requestConfirmation);
 router.post('/:id/decision', requireRole(), clientDecision);
 router.post('/:id/payments', requireRole('admin', 'staff'), recordPayment);
+router.post('/:id/cater', requireRole('admin', 'staff'), caterReservation);
+router.post('/:id/uncater', requireRole('admin', 'staff'), uncaterReservation);
 
 module.exports = router;

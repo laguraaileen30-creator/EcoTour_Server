@@ -253,9 +253,36 @@ exports.recordPayment = async (req, res) => {
     const cash = parseFloat(req.body?.cash_received ?? amount);
     if (!(cash >= amount)) { await conn.rollback(); return res.status(400).json({ success: false, code: 'INSUFFICIENT_CASH', message: `Cash received must be at least ${peso(amount)}.` }); }
 
-    const [countResult] = await conn.query('SELECT COUNT(*) AS cnt FROM payments');
-    const paymentRef = `OR-${new Date().getFullYear()}-${String((countResult[0]?.cnt || 0) + 1).padStart(6, '0')}`;
-    const staffName = req.body?.staff_name || 'Duty Cashier';
+    const [maxResult] = await conn.query('SELECT MAX(id) AS max_id FROM payments');
+    const nextSeq = (maxResult[0]?.max_id || 0) + 1;
+    let paymentRef = `OR-${new Date().getFullYear()}-${String(nextSeq).padStart(6, '0')}`;
+    const [dupCheck] = await conn.query('SELECT id FROM payments WHERE payment_ref = ?', [paymentRef]);
+    if (dupCheck.length > 0) {
+      paymentRef = `OR-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    }
+    const staffName = (req.body?.staff_name || req.user?.name || `${req.user?.fname || ''} ${req.user?.lname || ''}`.trim() || 'Duty Cashier').trim();
+    const currentUserName = (req.user?.name || `${req.user?.fname || ''} ${req.user?.lname || ''}`.trim() || '').trim();
+
+    // Conflict Guard: If another staff member has claimed this client within 3 minutes (180s)
+    if (b.catered_by && b.catered_at) {
+      const cateredBy = b.catered_by.trim().toLowerCase();
+      const sName = staffName.toLowerCase();
+      const uName = currentUserName.toLowerCase();
+      const isSameStaff = cateredBy === sName || (uName && cateredBy === uName);
+
+      if (!isSameStaff) {
+        const elapsedSeconds = (Date.now() - new Date(b.catered_at).getTime()) / 1000;
+        if (elapsedSeconds < 180) {
+          await conn.rollback();
+          return res.status(409).json({
+            success: false,
+            code: 'STAFF_COLLISION',
+            message: `Notice: This client is currently being assisted by ${b.catered_by}. Payment was not duplicated to prevent double transaction.`
+          });
+        }
+      }
+    }
+
     const [pay] = await conn.query(
       `INSERT INTO payments (payment_ref, booking_id, client_name, staff_id, staff_name, total_amount, cash_received, change_amount, payment_method, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Cash', 'Paid')`,
@@ -272,25 +299,30 @@ exports.recordPayment = async (req, res) => {
     const newPaid = r2(paid + amount);
     const fullyPaid = newPaid >= total - 0.009;
     const feePaid = b.fee_status === 'UNPAID' ? (newPaid >= Number(b.reservation_fee) - 0.009 ? 'PAID' : 'UNPAID') : b.fee_status;
-    const newStatus = fullyPaid ? 'Paid' : (feePaid === 'PAID' ? FEE_PAID_STATUS : b.status);
-    await conn.query('UPDATE bookings SET amount_paid = ?, fee_status = ?, status = ? WHERE id = ?', [newPaid, feePaid, newStatus, b.id]);
+    const newPaymentStatus = fullyPaid ? 'Paid' : (feePaid === 'PAID' ? '50% Paid' : (newPaid > 0 ? 'Partially Paid' : 'Unpaid'));
+    const newStatus = fullyPaid ? 'Paid' : (feePaid === 'PAID' ? 'Pending - 50% Paid' : b.status);
+    await conn.query(
+      'UPDATE bookings SET amount_paid = ?, fee_status = ?, payment_status = ?, status = ?, catered_by = NULL, catered_at = NULL WHERE id = ?',
+      [newPaid, feePaid, newPaymentStatus, newStatus, b.id]
+    );
     await conn.query('INSERT INTO audit_logs (action, description) VALUES (?, ?)', [
-      'RESERVATION_PAYMENT', `${paymentRef}: ${peso(amount)} ${kind === 'FEE' ? 'reservation fee' : 'payment'} for ${b.booking_number} (${b.client_name}) by ${staffName}`,
+      'RESERVATION_PAYMENT', `${paymentRef}: ${peso(amount)} ${kind === 'FEE' ? '50% reservation fee' : 'payment'} for ${b.booking_number} (${b.client_name}) by ${staffName}`,
     ]);
     await conn.commit();
 
     res.status(201).json({
       success: true,
-      message: fullyPaid ? 'Fully paid.' : kind === 'FEE' ? 'Reservation fee recorded.' : 'Payment recorded.',
+      message: fullyPaid ? 'Fully paid.' : kind === 'FEE' ? '50% reservation fee recorded.' : 'Payment recorded.',
       data: {
         receiptNo: paymentRef, amount, cashReceived: cash, change: Math.max(0, cash - amount),
-        amountPaid: newPaid, balanceDue: r2(Math.max(0, total - newPaid)), feeStatus: feePaid, status: newStatus, kind,
+        amountPaid: newPaid, balanceDue: r2(Math.max(0, total - newPaid)), feeStatus: feePaid,
+        paymentStatus: newPaymentStatus, status: newStatus, kind,
       },
     });
   } catch (error) {
     await conn.rollback().catch(() => {});
     console.error('Record payment error:', error);
-    res.status(500).json({ success: false, message: 'Could not record the payment', error: error.message });
+    res.status(500).json({ success: false, message: 'Could not record the payment: ' + error.message, error: error.message });
   } finally {
     conn.release();
   }

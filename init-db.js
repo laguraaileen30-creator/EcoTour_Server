@@ -108,6 +108,7 @@ async function initDatabase() {
     const [bookingTables] = await connection.query("SHOW TABLES LIKE 'bookings'");
     if (bookingTables.length > 0) {
       await connection.query("ALTER TABLE bookings MODIFY COLUMN status VARCHAR(50) NOT NULL DEFAULT 'Pending'");
+      await connection.query("ALTER TABLE bookings MODIFY COLUMN payment_status VARCHAR(50) NOT NULL DEFAULT 'Unpaid'");
       const [cols] = await connection.query("SHOW COLUMNS FROM bookings LIKE 'updated_at'");
       if (cols.length === 0) {
         await connection.query("ALTER TABLE bookings ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");

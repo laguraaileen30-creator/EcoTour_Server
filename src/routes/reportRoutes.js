@@ -5,7 +5,8 @@ const {
   getMonthlyRevenue,
   getCategoryBreakdown,
   saveDailyHistory,
-  getSavedDailyHistory
+  getSavedDailyHistory,
+  acknowledgeDailyHistory
 } = require('../controllers/reportController');
 
 const router = express.Router();
@@ -17,5 +18,6 @@ router.get('/monthly-revenue', getMonthlyRevenue);
 router.get('/categories', getCategoryBreakdown);
 router.post('/save-daily-history', saveDailyHistory);
 router.get('/saved-daily-history', getSavedDailyHistory);
+router.post('/acknowledge-daily-history', requireRole('admin'), acknowledgeDailyHistory);
 
 module.exports = router;

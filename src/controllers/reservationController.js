@@ -135,7 +135,10 @@ exports.getReservations = async (req, res) => {
         assignedFacilities: assigned,
         assignmentStatus: assigned.length ? 'Assigned' : 'Unassigned',
         paymentMethod: b.payment_method || 'Cash',
+        paymentStatus: b.payment_status || (parseFloat(b.amount_paid || 0) >= parseFloat(b.total_amount || 0) ? 'Paid' : (b.fee_status === 'PAID' ? '50% Paid' : 'Unpaid')),
         status: b.status || 'Pending',
+        cateredBy: b.catered_by || null,
+        cateredAt: b.catered_at || null,
         createdAt: b.created_at,
         serviceName: bItems.length > 1 ? `${mainService} (+${bItems.length - 1} extra)` : mainService,
         packageName: mainService,
@@ -236,6 +239,33 @@ exports.createReservation = async (req, res) => {
       await conn.rollback();
       return res.status(200).json({ success: true, duplicate: true, message: 'Reservation already exists', data: { id: existing.id, bookingRef: bookingNumber, bookingNumber, status: existing.status } });
     }
+
+    // --- Client Pending Booking Rule ---
+    // If the client has an unpaid pending reservation, they must pay first before creating another booking.
+    const scope = await getScope(req);
+    const isStaffAction = scope.isStaff || body.source === 'Walk-In POS' || ['staff', 'admin'].includes(String(req.user?.role || '').toLowerCase());
+    if (userId && !isStaffAction) {
+      const [pendingBookings] = await conn.query(
+        `SELECT id, booking_number, total_amount, reservation_fee, fee_status, amount_paid, status, payment_status
+         FROM bookings
+         WHERE user_id = ?
+           AND status NOT IN ('Cancelled', 'Rejected', 'Completed')
+           AND (fee_status IS NULL OR fee_status != 'PAID')
+           AND (payment_status IS NULL OR payment_status = 'Unpaid' OR amount_paid = 0 OR status = 'Pending')
+         LIMIT 1`,
+        [userId]
+      );
+      if (pendingBookings.length > 0) {
+        await conn.rollback();
+        const pendingRef = pendingBookings[0].booking_number;
+        return res.status(400).json({ 
+          success: false, 
+          code: 'PENDING_BOOKING_EXISTS',
+          message: `You currently have an unpaid pending reservation (${pendingRef}). You must pay first before you can create another booking.`
+        });
+      }
+    }
+    // ----------------------------------
 
     const catalog = await A.loadCatalog(conn);
     const pricingCtx = await Pricing.loadPricingContext(conn);
@@ -648,3 +678,79 @@ exports.getPricing = async (req, res) => {
     res.status(500).json({ success: false, message: 'Could not load pricing', error: error.message });
   }
 };
+
+// POST /api/v1/reservations/:id/cater
+// Claims a client booking for a staff member to prevent multiple staff simultaneously catering
+exports.caterReservation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const booking = await resolveBooking(id);
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Reservation not found' });
+    }
+
+    const staffName = (req.body?.staff_name || req.user?.name || `${req.user?.fname || ''} ${req.user?.lname || ''}`.trim() || 'Staff').trim();
+
+    // Check if another staff member has claimed this booking within the last 3 minutes (180s)
+    if (booking.catered_by && booking.catered_by.toLowerCase() !== staffName.toLowerCase() && booking.catered_at) {
+      const elapsedSeconds = (Date.now() - new Date(booking.catered_at).getTime()) / 1000;
+      if (elapsedSeconds < 180) {
+        return res.status(409).json({
+          success: false,
+          conflict: true,
+          lockedBy: booking.catered_by,
+          message: `This client is currently being assisted by ${booking.catered_by}. Please select another client to avoid duplicate service.`
+        });
+      }
+    }
+
+    // Set lock
+    await db.query(
+      `UPDATE bookings SET catered_by = ?, catered_at = NOW() WHERE id = ?`,
+      [staffName, booking.id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `You are now assisting ${booking.client_name || 'Client'}.`,
+      cateredBy: staffName,
+      bookingId: booking.id
+    });
+  } catch (error) {
+    console.error('Error claiming booking:', error);
+    return res.status(500).json({ success: false, message: 'Server error claiming booking', error: error.message });
+  }
+};
+
+// POST /api/v1/reservations/:id/uncater
+// Releases claim when payment modal is cancelled or transaction aborted
+exports.uncaterReservation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const booking = await resolveBooking(id);
+    if (!booking) {
+      return res.status(404).json({ success: false, message: 'Reservation not found' });
+    }
+
+    const staffName = (req.body?.staff_name || req.user?.name || `${req.user?.fname || ''} ${req.user?.lname || ''}`.trim() || '').trim();
+
+    // Only clear if matching staff or force requested
+    if (staffName && booking.catered_by && booking.catered_by.toLowerCase() !== staffName.toLowerCase() && !req.body?.force) {
+      return res.status(200).json({ success: true, message: 'Claim held by someone else, not released.' });
+    }
+
+    await db.query(
+      `UPDATE bookings SET catered_by = NULL, catered_at = NULL WHERE id = ?`,
+      [booking.id]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Booking released successfully. Another staff member may now assist this client.'
+    });
+  } catch (error) {
+    console.error('Error releasing booking:', error);
+    return res.status(500).json({ success: false, message: 'Server error releasing booking', error: error.message });
+  }
+};
+

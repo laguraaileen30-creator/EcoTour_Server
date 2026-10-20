@@ -32,8 +32,6 @@ exports.getCategoryBreakdown = async (req, res, next) => {
 };
 
 // Ensure daily_cash_history table exists & save daily tally log
-// NOTE: sp_save_daily_history intentionally NOT created as SP (dynamic table creation
-// and the daily_cash_history table is not in the base schema — kept as inline SQL)
 exports.saveDailyHistory = async (req, res, next) => {
   try {
     const {
@@ -45,33 +43,28 @@ exports.saveDailyHistory = async (req, res, next) => {
       park_share = 0,
       barangay_share = 0,
       municipal_share = 0,
-      saved_by = "Admin"
+      saved_by = "Staff Cashier",
+      cashier_name = null,
+      notes = "",
+      status = "Submitted to Admin",
+      total_transactions = 0
     } = req.body;
 
     const recordDate = date || new Date().toISOString().split("T")[0];
+    const user = req.user;
+    const author = cashier_name || (user?.fname ? `${user.fname} ${user.lname || ''}`.trim() : null) || saved_by || "Staff Cashier";
 
-    // Ensure table exists
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS daily_cash_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        date VARCHAR(20) UNIQUE NOT NULL,
-        total_visitors INT DEFAULT 0,
-        entrance_revenue DECIMAL(10,2) DEFAULT 0.00,
-        service_revenue DECIMAL(10,2) DEFAULT 0.00,
-        total_cash_revenue DECIMAL(10,2) DEFAULT 0.00,
-        park_share DECIMAL(10,2) DEFAULT 0.00,
-        barangay_share DECIMAL(10,2) DEFAULT 0.00,
-        municipal_share DECIMAL(10,2) DEFAULT 0.00,
-        saved_by VARCHAR(100) DEFAULT 'Admin',
-        status VARCHAR(30) DEFAULT 'Frozen & Saved',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
+    // Ensure columns exist
+    try {
+      await db.query(`ALTER TABLE daily_cash_history ADD COLUMN IF NOT EXISTS notes TEXT NULL`);
+      await db.query(`ALTER TABLE daily_cash_history ADD COLUMN IF NOT EXISTS cashier_name VARCHAR(100) NULL`);
+      await db.query(`ALTER TABLE daily_cash_history ADD COLUMN IF NOT EXISTS total_transactions INT DEFAULT 0`);
+    } catch (_) {}
 
     await db.query(`
       INSERT INTO daily_cash_history 
-      (date, total_visitors, entrance_revenue, service_revenue, total_cash_revenue, park_share, barangay_share, municipal_share, saved_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (date, total_visitors, entrance_revenue, service_revenue, total_cash_revenue, park_share, barangay_share, municipal_share, saved_by, cashier_name, notes, status, total_transactions)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
       total_visitors = VALUES(total_visitors),
       entrance_revenue = VALUES(entrance_revenue),
@@ -80,23 +73,34 @@ exports.saveDailyHistory = async (req, res, next) => {
       park_share = VALUES(park_share),
       barangay_share = VALUES(barangay_share),
       municipal_share = VALUES(municipal_share),
-      saved_by = VALUES(saved_by)
-    `, [recordDate, total_visitors, entrance_revenue, service_revenue, total_cash_revenue, park_share, barangay_share, municipal_share, saved_by]);
+      saved_by = VALUES(saved_by),
+      cashier_name = VALUES(cashier_name),
+      notes = VALUES(notes),
+      status = VALUES(status),
+      total_transactions = VALUES(total_transactions)
+    `, [recordDate, total_visitors, entrance_revenue, service_revenue, total_cash_revenue, park_share, barangay_share, municipal_share, author, author, notes, status, total_transactions]);
 
     // Record audit log via SP
-    await db.query(
-      "CALL sp_create_audit_log(?, ?, ?)",
-      [null, 'DAILY_CASH_SAVED', `Admin (${saved_by}) saved & froze official Daily Cash Computation for ${recordDate} - Total Cash: ${total_cash_revenue}`]
-    );
+    try {
+      await db.query(
+        "CALL sp_create_audit_log(?, ?, ?)",
+        [user?.user_id || user?.id || null, 'DAILY_TALLY_SUBMITTED', `Staff Cashier (${author}) submitted Daily Sales Tally for ${recordDate} - Total Cash: ₱${total_cash_revenue} (${total_visitors} visitors)`]
+      );
+    } catch (auditErr) {
+      console.warn("Audit log note:", auditErr.message);
+    }
 
     res.status(200).json({
       success: true,
-      message: `Daily cash computation history for ${recordDate} saved & frozen in database successfully.`,
+      message: `Daily sales tally for ${recordDate} submitted successfully to Admin.`,
       data: {
         date: recordDate,
         total_visitors,
         total_cash_revenue,
-        saved_by
+        saved_by: author,
+        cashier_name: author,
+        notes,
+        status
       }
     });
   } catch (err) {
@@ -108,27 +112,43 @@ exports.saveDailyHistory = async (req, res, next) => {
 // Fetch all saved daily cash computation history records
 exports.getSavedDailyHistory = async (req, res, next) => {
   try {
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS daily_cash_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        date VARCHAR(20) UNIQUE NOT NULL,
-        total_visitors INT DEFAULT 0,
-        entrance_revenue DECIMAL(10,2) DEFAULT 0.00,
-        service_revenue DECIMAL(10,2) DEFAULT 0.00,
-        total_cash_revenue DECIMAL(10,2) DEFAULT 0.00,
-        park_share DECIMAL(10,2) DEFAULT 0.00,
-        barangay_share DECIMAL(10,2) DEFAULT 0.00,
-        municipal_share DECIMAL(10,2) DEFAULT 0.00,
-        saved_by VARCHAR(100) DEFAULT 'Admin',
-        status VARCHAR(30) DEFAULT 'Frozen & Saved',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
-
-    const [rows] = await db.query(`SELECT * FROM daily_cash_history ORDER BY date DESC`);
+    const [rows] = await db.query(`SELECT * FROM daily_cash_history ORDER BY date DESC, created_at DESC`);
     res.status(200).json({ success: true, history: rows });
   } catch (err) {
     console.error("Error fetching saved daily cash history:", err);
     res.status(500).json({ success: false, message: "Failed to fetch saved daily cash history", error: err.message });
+  }
+};
+
+// Admin acknowledges / verifies staff daily tally
+exports.acknowledgeDailyHistory = async (req, res, next) => {
+  try {
+    const { id, date } = req.body;
+    const user = req.user;
+    const adminName = user?.fname ? `${user.fname} ${user.lname || ''}`.trim() : (user?.name || 'Admin');
+
+    await db.query(
+      `UPDATE daily_cash_history 
+       SET status = 'Verified & Acknowledged',
+           saved_by = CONCAT(saved_by, ' (Verified by ', ?, ')')
+       WHERE id = ? OR date = ?`,
+      [adminName, id || 0, date || '']
+    );
+
+    // Record audit log
+    try {
+      await db.query(
+        "CALL sp_create_audit_log(?, ?, ?)",
+        [user?.user_id || user?.id || null, 'DAILY_TALLY_ACKNOWLEDGED', `Admin (${adminName}) acknowledged & verified Daily Sales Tally for ${date || id}`]
+      );
+    } catch (e) {}
+
+    res.status(200).json({
+      success: true,
+      message: `Daily sales tally for ${date || id} verified and acknowledged by ${adminName}.`
+    });
+  } catch (err) {
+    console.error("Error acknowledging daily history:", err);
+    res.status(500).json({ success: false, message: "Failed to acknowledge daily tally", error: err.message });
   }
 };
