@@ -2,6 +2,21 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const db = require("../config/database");
 
+const findUserByEmail = async (email) => {
+  const [rows] = await db.query(
+    `SELECT
+      user_id, user_number, fname, mname, lname,
+      gender, birthdate, address, contact_no,
+      email, username, password, role, status,
+      approved_by, approved_at, created_at, updated_at
+    FROM users
+    WHERE email = CONVERT(? USING utf8mb4) COLLATE utf8mb4_0900_ai_ci
+    LIMIT 1`,
+    [email]
+  );
+  return rows;
+};
+
 // ================= LOGIN =================
 
 exports.login = async (req, res, next) => {
@@ -15,10 +30,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Find user by email via stored procedure
-    const [rows] = await db.query("CALL sp_get_user_by_email(?)", [email]);
-    // mysql2 returns [[resultRows], fields] for CALL
-    const resultRows = rows[0];
+    const resultRows = await findUserByEmail(email);
 
     if (!resultRows || resultRows.length === 0) {
       return res.status(401).json({
@@ -163,9 +175,7 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    // Check duplicate email via SP
-    const [existRows] = await db.query("CALL sp_get_user_by_email(?)", [email]);
-    const existResult = existRows[0];
+    const existResult = await findUserByEmail(email);
 
     if (existResult && existResult.length > 0) {
       return res.status(400).json({

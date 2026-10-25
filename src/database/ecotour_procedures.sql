@@ -420,7 +420,7 @@ END$$
 
 DROP PROCEDURE IF EXISTS `sp_get_user_by_email`$$
 CREATE PROCEDURE `sp_get_user_by_email`(
-  IN p_email VARCHAR(100)
+  IN p_email VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   SELECT
