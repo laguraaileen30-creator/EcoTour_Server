@@ -1119,8 +1119,8 @@ DELIMITER ;
 DELIMITER $$
 
 /*!50003 CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_get_all_users`(
-  IN p_status   VARCHAR(30),
-  IN p_role     VARCHAR(20)
+  IN p_status   VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  IN p_role     VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   SELECT
@@ -1348,7 +1348,7 @@ DELIMITER ;
 DELIMITER $$
 
 /*!50003 CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_get_user_by_id`(
-  IN p_id VARCHAR(50)
+  IN p_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   SELECT
@@ -1482,7 +1482,7 @@ DELIMITER ;
 DELIMITER $$
 
 /*!50003 CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_search_users`(
-  IN p_term VARCHAR(100)
+  IN p_term VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   DECLARE v_like VARCHAR(102);

@@ -5,22 +5,25 @@ const bcrypt = require("bcryptjs");
 async function initDatabase() {
   let connection;
   try {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Refusing to run init-db.js in production because it drops and recreates tables.");
+    }
+
+    const requiredConfig = ["DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME"];
+    const missingConfig = requiredConfig.filter((key) => !process.env[key]);
+    if (missingConfig.length > 0) {
+      throw new Error(`Missing database configuration: ${missingConfig.join(", ")}`);
+    }
+
     connection = await mysql.createConnection({
-      host: process.env.DB_HOST || "localhost",
-      port: process.env.DB_PORT || 3306,
-      user: process.env.DB_USER || "root",
-      password: process.env.DB_PASSWORD || "",
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT),
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
     });
 
     console.log("Connected to MySQL server.");
-
-    // Create database if not exists
-    await connection.query(`
-      CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || "ecotour_db"}\`
-      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    `);
-    
-    await connection.changeUser({ database: process.env.DB_NAME || "ecotour_db" });
 
     await connection.query("SET FOREIGN_KEY_CHECKS = 0");
 
@@ -339,6 +342,7 @@ async function initDatabase() {
     await connection.end();
   } catch (err) {
     console.error("❌ Database Initialization Error:", err.message);
+    process.exitCode = 1;
     if (connection) await connection.end();
   }
 }

@@ -41,7 +41,7 @@ END$$
 -- 2. Lookup user by numeric user_id or user_number string
 DROP PROCEDURE IF EXISTS `sp_get_user_by_id`$$
 CREATE PROCEDURE `sp_get_user_by_id`(
-  IN p_id VARCHAR(50)
+  IN p_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   SELECT
@@ -57,8 +57,8 @@ END$$
 -- 3. List all users with optional role / status filters
 DROP PROCEDURE IF EXISTS `sp_get_all_users`$$
 CREATE PROCEDURE `sp_get_all_users`(
-  IN p_status   VARCHAR(30),
-  IN p_role     VARCHAR(20)
+  IN p_status   VARCHAR(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  IN p_role     VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   SELECT
@@ -76,7 +76,7 @@ END$$
 -- 4. Full-text search across user fields
 DROP PROCEDURE IF EXISTS `sp_search_users`$$
 CREATE PROCEDURE `sp_search_users`(
-  IN p_term VARCHAR(100)
+  IN p_term VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci
 )
 BEGIN
   DECLARE v_like VARCHAR(102);
