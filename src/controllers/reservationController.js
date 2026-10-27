@@ -423,7 +423,25 @@ exports.updateReservationStatus = async (req, res) => {
     if (!bookingRow) {
       return res.status(404).json({ success: false, message: 'Reservation not found' });
     }
-    await db.query('UPDATE bookings SET status = ?, updated_at = NOW() WHERE id = ?', [status, bookingRow.id]);
+    const checkoutRequested = /complete|checked out|checkout|done/i.test(String(status));
+    const [updated] = await db.query(
+      `UPDATE bookings SET status = ?, updated_at = NOW()
+       WHERE id = ?${checkoutRequested ? ' AND COALESCE(amount_paid, 0) >= COALESCE(total_amount, 0) - 0.009' : ''}`,
+      [status, bookingRow.id]
+    );
+    if (checkoutRequested && updated.affectedRows === 0) {
+      const [[paymentState]] = await db.query(
+        'SELECT total_amount, amount_paid FROM bookings WHERE id = ?',
+        [bookingRow.id]
+      );
+      const balanceDue = Math.max(0, Number(paymentState?.total_amount || 0) - Number(paymentState?.amount_paid || 0));
+      return res.status(409).json({
+        success: false,
+        code: 'BALANCE_DUE',
+        balanceDue,
+        message: `Collect the remaining balance of ₱${balanceDue.toFixed(2)} before checking out this reservation.`,
+      });
+    }
 
     // Keep numbered facility assignments in step with the reservation lifecycle
     try {
@@ -476,7 +494,15 @@ const ADDON_REQUEST_TTL_MS = 60 * 60 * 1000;
 // left untouched.
 exports.addServicesToReservation = async (req, res) => {
   const { id } = req.params;
-  const { items = [], cash_received, staff_name = 'Duty Cashier', staff_id = null, request_id } = req.body || {};
+  const {
+    items = [],
+    cash_received,
+    payment_mode = 'pay_now',
+    staff_name = 'Duty Cashier',
+    staff_id = null,
+    request_id
+  } = req.body || {};
+  const paymentMode = payment_mode === 'pay_later' ? 'pay_later' : 'pay_now';
 
   const now = Date.now();
   for (const [key, ts] of processedAddonRequests) {
@@ -505,7 +531,7 @@ exports.addServicesToReservation = async (req, res) => {
     await conn.beginTransaction();
 
     const [bookingRows] = await conn.query(
-      'SELECT id, booking_number, client_name, total_amount, status, booking_date FROM bookings WHERE id = ? OR booking_number = ? LIMIT 1 FOR UPDATE',
+      'SELECT id, booking_number, client_name, total_amount, amount_paid, status, booking_date FROM bookings WHERE id = ? OR booking_number = ? LIMIT 1 FOR UPDATE',
       [/^\d+$/.test(String(id)) ? Number(id) : 0, String(id)]
     );
     const booking = bookingRows[0];
@@ -533,13 +559,13 @@ exports.addServicesToReservation = async (req, res) => {
       return res.status(400).json({ success: false, message: priceErr.message });
     }
     const addonAmount = priced.total;
-    const cashRec = parseFloat(cash_received ?? addonAmount);
-    if (!(cashRec >= addonAmount)) {
+    const cashRec = paymentMode === 'pay_now' ? parseFloat(cash_received ?? addonAmount) : 0;
+    if (paymentMode === 'pay_now' && !(cashRec >= addonAmount)) {
       await conn.rollback();
       if (request_id) processedAddonRequests.delete(request_id);
       return res.status(400).json({ success: false, code: 'INSUFFICIENT_CASH', addonAmount, message: `Insufficient cash. Add-on amount due is ₱${addonAmount}.` });
     }
-    const changeAmt = Math.max(0, cashRec - addonAmount);
+    const changeAmt = paymentMode === 'pay_now' ? Math.max(0, cashRec - addonAmount) : 0;
 
     // The added services must still be available on the booking's date
     const bookingDate = A.toDateStr(booking.booking_date);
@@ -562,45 +588,72 @@ exports.addServicesToReservation = async (req, res) => {
       'INSERT INTO booking_items (booking_id, service_id, service_name, unit_price, quantity, subtotal, item_type) VALUES ?',
       [priced.lines.map((l) => [booking.id, l.serviceId || 0, l.name, l.unitPrice, l.quantity, l.subtotal, l.itemType])]
     );
-    await conn.query('UPDATE bookings SET total_amount = total_amount + ? WHERE id = ?', [addonAmount, booking.id]);
-
-    const [countResult] = await conn.query('SELECT COUNT(*) AS cnt FROM payments');
-    const payment_ref = `OR-2026-${String((countResult[0]?.cnt || 0) + 1).padStart(6, '0')}`;
-
-    const [payResult] = await conn.query(
-      `INSERT INTO payments (payment_ref, booking_id, client_name, staff_id, staff_name, total_amount, cash_received, change_amount, payment_method, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Cash', 'Paid')`,
-      [payment_ref, booking.id, booking.client_name, staff_id || null, staff_name, addonAmount, cashRec, changeAmt]
-    );
-
-    const [settingRows] = await conn.query(
-      "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('park_share_pct','barangay_share_pct','guide_share_pct')"
-    );
-    const pct = { park_share_pct: 70, barangay_share_pct: 20, guide_share_pct: 10 };
-    settingRows.forEach(r => { pct[r.setting_key] = parseFloat(r.setting_value) || pct[r.setting_key]; });
-    const round2 = (n) => Math.round(n * 100) / 100;
-    const parkShare = round2(addonAmount * pct.park_share_pct / 100);
-    const barangayShare = round2(addonAmount * pct.barangay_share_pct / 100);
-    const guideShare = round2(addonAmount * pct.guide_share_pct / 100);
-
+    const previousTotal = parseFloat(booking.total_amount || 0);
+    const previousPaid = parseFloat(booking.amount_paid || 0);
+    const newTotal = Math.round((previousTotal + addonAmount) * 100) / 100;
+    const newPaid = Math.round((previousPaid + (paymentMode === 'pay_now' ? addonAmount : 0)) * 100) / 100;
+    const balanceDue = Math.max(0, Math.round((newTotal - newPaid) * 100) / 100);
+    const paymentStatus = balanceDue <= 0.009 ? 'Paid' : (newPaid > 0 ? 'Partially Paid' : 'Unpaid');
     await conn.query(
-      'INSERT INTO revenue_shares (payment_id, gross_amount, park_share, barangay_share, guide_share) VALUES (?, ?, ?, ?, ?)',
-      [payResult.insertId, addonAmount, parkShare, barangayShare, guideShare]
+      'UPDATE bookings SET total_amount = ?, amount_paid = ?, payment_status = ? WHERE id = ?',
+      [newTotal, newPaid, paymentStatus, booking.id]
     );
+
+    let payment_ref = null;
+    let payResult = null;
+    let parkShare = 0;
+    let barangayShare = 0;
+    let guideShare = 0;
+    if (paymentMode === 'pay_now') {
+      const [countResult] = await conn.query('SELECT COUNT(*) AS cnt FROM payments');
+      payment_ref = `OR-${new Date().getFullYear()}-${String((countResult[0]?.cnt || 0) + 1).padStart(6, '0')}`;
+
+      [payResult] = await conn.query(
+        `INSERT INTO payments (payment_ref, booking_id, client_name, staff_id, staff_name, total_amount, cash_received, change_amount, payment_method, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Cash', 'Paid')`,
+        [payment_ref, booking.id, booking.client_name, staff_id || req.user?.user_id || null, staff_name, addonAmount, cashRec, changeAmt]
+      );
+
+      const [settingRows] = await conn.query(
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('park_share_pct','barangay_share_pct','guide_share_pct')"
+      );
+      const pct = { park_share_pct: 70, barangay_share_pct: 20, guide_share_pct: 10 };
+      settingRows.forEach(r => { pct[r.setting_key] = parseFloat(r.setting_value) || pct[r.setting_key]; });
+      const round2 = (n) => Math.round(n * 100) / 100;
+      parkShare = round2(addonAmount * pct.park_share_pct / 100);
+      barangayShare = round2(addonAmount * pct.barangay_share_pct / 100);
+      guideShare = round2(addonAmount * pct.guide_share_pct / 100);
+
+      await conn.query(
+        'INSERT INTO revenue_shares (payment_id, gross_amount, park_share, barangay_share, guide_share) VALUES (?, ?, ?, ?, ?)',
+        [payResult.insertId, addonAmount, parkShare, barangayShare, guideShare]
+      );
+    }
+
     await conn.query(
       'INSERT INTO audit_logs (action, description) VALUES (?, ?)',
-      ['RESERVATION_ADDON_PAID', `Receipt #${payment_ref}: ${staff_name} added services to ${booking.booking_number} (${booking.client_name}) - Add-on amount: ${addonAmount} (previous total ${booking.total_amount} not re-charged)`]
+      [
+        paymentMode === 'pay_now' ? 'RESERVATION_ADDON_PAID' : 'RESERVATION_ADDON_ADDED_TO_BALANCE',
+        `${staff_name} added services to ${booking.booking_number} (${booking.client_name}) - Add-on amount: ${addonAmount}; payment mode: ${paymentMode}; new balance: ${balanceDue}`
+      ]
     );
 
     await conn.commit();
 
     res.status(201).json({
       success: true,
-      message: 'Add-on services recorded. Only the new services were charged.',
-      previousTotal: parseFloat(booking.total_amount || 0),
+      message: paymentMode === 'pay_now'
+        ? 'Add-on services recorded and paid.'
+        : 'Add-on services recorded and added to the reservation balance.',
+      paymentMode,
+      previousTotal,
+      previousAmountPaid: previousPaid,
       addonAmount,
-      newTotal: parseFloat(booking.total_amount || 0) + addonAmount,
-      receipt: {
+      newTotal,
+      amountPaid: newPaid,
+      balanceDue,
+      items: priced.lines,
+      receipt: paymentMode === 'pay_now' ? {
         id: payResult.insertId,
         payment_ref,
         receiptNo: payment_ref,
@@ -621,7 +674,7 @@ exports.addServicesToReservation = async (req, res) => {
         municipalShare: guideShare,
         items: priced.lines,
         created_at: new Date().toISOString()
-      }
+      } : null
     });
   } catch (error) {
     await conn.rollback().catch(() => {});
@@ -753,4 +806,3 @@ exports.uncaterReservation = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error releasing booking', error: error.message });
   }
 };
-

@@ -300,7 +300,10 @@ exports.recordPayment = async (req, res) => {
     const fullyPaid = newPaid >= total - 0.009;
     const feePaid = b.fee_status === 'UNPAID' ? (newPaid >= Number(b.reservation_fee) - 0.009 ? 'PAID' : 'UNPAID') : b.fee_status;
     const newPaymentStatus = fullyPaid ? 'Paid' : (feePaid === 'PAID' ? '50% Paid' : (newPaid > 0 ? 'Partially Paid' : 'Unpaid'));
-    const newStatus = fullyPaid ? 'Paid' : (feePaid === 'PAID' ? 'Pending - 50% Paid' : b.status);
+    const alreadyInService = /using|checked in|in service/i.test(String(b.status || ''));
+    const newStatus = fullyPaid
+      ? (alreadyInService ? b.status : 'Paid')
+      : (feePaid === 'PAID' ? 'Pending - 50% Paid' : b.status);
     await conn.query(
       'UPDATE bookings SET amount_paid = ?, fee_status = ?, payment_status = ?, status = ?, catered_by = NULL, catered_at = NULL WHERE id = ?',
       [newPaid, feePaid, newPaymentStatus, newStatus, b.id]
