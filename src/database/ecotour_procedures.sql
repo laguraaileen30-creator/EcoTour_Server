@@ -460,7 +460,11 @@ BEGIN
   FROM `notifications`
   WHERE 
     (`user_id` = p_user_id) 
-    OR (`user_id` IS NULL AND (`role_target` = 'all' OR LOWER(`role_target`) = LOWER(p_role)))
+    OR (`user_id` IS NULL AND (
+      CONVERT(`role_target` USING utf8mb4) COLLATE utf8mb4_unicode_ci = _utf8mb4'all' COLLATE utf8mb4_unicode_ci
+      OR LOWER(CONVERT(`role_target` USING utf8mb4)) COLLATE utf8mb4_unicode_ci =
+         LOWER(CONVERT(p_role USING utf8mb4)) COLLATE utf8mb4_unicode_ci
+    ))
   ORDER BY `is_read` ASC, `created_at` DESC
   LIMIT 50;
 
@@ -470,7 +474,11 @@ BEGIN
     `is_read` = 0
     AND (
       (`user_id` = p_user_id) 
-      OR (`user_id` IS NULL AND (`role_target` = 'all' OR LOWER(`role_target`) = LOWER(p_role)))
+      OR (`user_id` IS NULL AND (
+        CONVERT(`role_target` USING utf8mb4) COLLATE utf8mb4_unicode_ci = _utf8mb4'all' COLLATE utf8mb4_unicode_ci
+        OR LOWER(CONVERT(`role_target` USING utf8mb4)) COLLATE utf8mb4_unicode_ci =
+           LOWER(CONVERT(p_role USING utf8mb4)) COLLATE utf8mb4_unicode_ci
+      ))
     );
 END$$
 
@@ -501,7 +509,11 @@ BEGIN
       `is_read` = 0
       AND (
         (`user_id` = p_user_id) 
-        OR (`user_id` IS NULL AND (`role_target` = 'all' OR LOWER(`role_target`) = LOWER(p_role)))
+        OR (`user_id` IS NULL AND (
+          CONVERT(`role_target` USING utf8mb4) COLLATE utf8mb4_unicode_ci = _utf8mb4'all' COLLATE utf8mb4_unicode_ci
+          OR LOWER(CONVERT(`role_target` USING utf8mb4)) COLLATE utf8mb4_unicode_ci =
+             LOWER(CONVERT(p_role USING utf8mb4)) COLLATE utf8mb4_unicode_ci
+        ))
       );
   ELSE
     UPDATE `notifications`

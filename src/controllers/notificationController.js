@@ -1,5 +1,18 @@
 const db = require('../config/database');
 
+const notificationScopeSql = `(
+  user_id = ?
+  OR (
+    user_id IS NULL
+    AND (
+      CONVERT(role_target USING utf8mb4) COLLATE utf8mb4_unicode_ci =
+        _utf8mb4'all' COLLATE utf8mb4_unicode_ci
+      OR LOWER(CONVERT(role_target USING utf8mb4)) COLLATE utf8mb4_unicode_ci =
+        LOWER(CONVERT(? USING utf8mb4)) COLLATE utf8mb4_unicode_ci
+    )
+  )
+)`;
+
 /**
  * GET /api/v1/notifications
  * Fetches notifications for current user/role
@@ -11,11 +24,24 @@ exports.getUserNotifications = async (req, res, next) => {
     const userId = (isAdmin && req.query.user_id) || req.user?.user_id || req.user?.id || 0;
     const role = ((isAdmin && req.query.role) || req.user?.role || 'client').toLowerCase();
 
-    // Call stored procedure
-    const [results] = await db.query('CALL sp_get_user_notifications(?, ?)', [userId, role]);
-
-    const notifications = results[0] || [];
-    const unreadCount = results[1] && results[1][0] ? results[1][0].unread_count : 0;
+    const [[notifications], [countRows]] = await Promise.all([
+      db.query(
+        `SELECT id, user_id, role_target, title, message, type,
+                reference_id, is_read, created_at
+         FROM notifications
+         WHERE ${notificationScopeSql}
+         ORDER BY is_read ASC, created_at DESC
+         LIMIT 50`,
+        [userId, role]
+      ),
+      db.query(
+        `SELECT COUNT(*) AS unread_count
+         FROM notifications
+         WHERE is_read = 0 AND ${notificationScopeSql}`,
+        [userId, role]
+      ),
+    ]);
+    const unreadCount = countRows[0]?.unread_count || 0;
 
     res.status(200).json({
       success: true,
@@ -62,14 +88,16 @@ exports.markAllAsRead = async (req, res, next) => {
     const role = (req.body.role || req.user?.role || 'client').toLowerCase();
 
     const [result] = await db.query(
-      'CALL sp_mark_notification_as_read(NULL, ?, ?, 1)',
+      `UPDATE notifications
+       SET is_read = 1
+       WHERE is_read = 0 AND ${notificationScopeSql}`,
       [userId, role]
     );
 
     res.status(200).json({
       success: true,
       message: 'All notifications marked as read',
-      affectedRows: result[0]?.[0]?.affected_rows || 0,
+      affectedRows: result.affectedRows || 0,
     });
   } catch (err) {
     next(err);
