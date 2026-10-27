@@ -68,6 +68,32 @@ const createApp = () => {
   // Identify the caller from a Bearer token when present (routes decide what requires a login)
   app.use(attachUser);
 
+  app.get('/', (req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      service: 'ecotour-server',
+      message: 'EcoTour API is running.',
+      apiBase: '/api/v1',
+      health: '/health',
+    });
+  });
+
+  app.get('/api/v1', (req, res) => {
+    res.status(200).json({
+      status: 'ok',
+      service: 'ecotour-server',
+      message: 'EcoTour API v1 is running.',
+      health: '/health',
+      routes: [
+        '/api/v1/auth',
+        '/api/v1/reservations',
+        '/api/v1/payments',
+        '/api/v1/services',
+        '/api/v1/packages',
+      ],
+    });
+  });
+
   app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', service: 'ecotour-server' });
   });
